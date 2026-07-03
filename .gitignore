@@ -1,0 +1,20 @@
+# Go
+/bin/
+/dist/
+/coverage.out
+
+# Frontend
+/internal/web/dist/
+/internal/web/assets/dist/
+/internal/web/frontend/node_modules/
+/internal/web/frontend/coverage/
+/internal/web/frontend/.vite/
+
+# Local/editor
+.DS_Store
+.env
+.env.local
+
+/comet
+
+/kodelet-config.yaml

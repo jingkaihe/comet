@@ -1,0 +1,57 @@
+name: Test and Build
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Tests & Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: internal/web/frontend/package-lock.json
+
+      - name: Load version
+        run: echo "VERSION=$(cat VERSION.txt)" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: internal/web/frontend
+
+      - name: Test frontend
+        run: npm test
+        working-directory: internal/web/frontend
+
+      - name: Generate embedded frontend assets
+        run: go generate ./internal/web
+
+      - name: Test Go
+        run: go test ./...
+
+      - name: Build Go binary
+        run: go build ./cmd/comet
+
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --snapshot --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

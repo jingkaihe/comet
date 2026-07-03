@@ -1,0 +1,67 @@
+version: 2
+
+project_name: comet
+
+before:
+  hooks:
+    - go mod download
+    - go generate ./internal/web
+
+release:
+  prerelease: auto
+
+builds:
+  - id: comet
+    main: ./cmd/comet
+    binary: comet
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/jingkaihe/comet/internal/version.Version={{ .Version }}
+        -X github.com/jingkaihe/comet/internal/version.GitCommit={{ .Commit }}
+        -X github.com/jingkaihe/comet/internal/version.BuildTime={{ .Date }}
+
+archives:
+  - id: raw-binaries
+    ids:
+      - comet
+    formats:
+      - binary
+    name_template: >-
+      comet-{{ .Os }}-
+      {{- if eq .Arch "amd64" -}}amd64
+      {{- else if eq .Arch "arm64" -}}arm64
+      {{- else -}}{{ .Arch }}{{- end -}}
+
+snapshot:
+  version_template: "{{ if .Env.VERSION }}{{ .Env.VERSION }}{{ else }}{{ .Version }}{{ end }}"
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - id: comet-linux
+    ids:
+      - comet
+    package_name: comet
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    maintainer: Jingkai He <jingkai@hey.com>
+    description: A small Go web terminal server with Ghostty rendering.
+    homepage: https://github.com/jingkaihe/comet
+    license: MIT
+    contents:
+      - src: README.md
+        dst: /usr/share/doc/comet/README.md
+        file_info:
+          mode: 0644
