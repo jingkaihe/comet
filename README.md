@@ -32,32 +32,5 @@ tmp=$(mktemp -d) && git clone --depth=1 https://github.com/mbadolato/iTerm2-Colo
 
 ## Development
 
-```sh
-mise run install             # install Go/npm dependencies
-mise run test                # frontend tests/typecheck + embedded assets + Go tests
-mise run build               # build ./bin/comet with embedded web UI
-mise run serve-dev           # run ./bin/comet serve --skip-auth
-
-# or run the underlying commands directly:
-go generate ./internal/web   # npm ci + vite build frontend into embedded assets
-go test ./...
-go build ./cmd/comet
-
-(cd internal/web/frontend && npm test)
-```
-
-The Go binary embeds generated assets under `internal/web/assets/dist`, which is
-produced by the Vite frontend build and includes the `ghostty-web` WebAssembly
-assets. That generated directory is intentionally ignored by git.
-
-## Releases
-
-`VERSION.txt` is the source of truth for release versions. To publish a release,
-update `VERSION.txt`, commit the change, and run:
-
-```sh
-mise run push-tag
-```
-
-That creates/pushes `v$(cat VERSION.txt)` and triggers the GitHub Actions release
-workflow for `github.com/jingkaihe/comet`.
+Developer workflows, build/test commands, embedded frontend asset details, and
+release steps are documented in `AGENTS.md`.
