@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -103,6 +104,14 @@ func (s *Server) handleTerminalTerminate(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.terminalOriginAllowed(r) {
+		http.Error(w, "cross-origin terminal termination denied", http.StatusForbidden)
+		return
+	}
+	if !requestContentTypeIsJSON(r) {
+		http.Error(w, "content type must be application/json", http.StatusUnsupportedMediaType)
+		return
+	}
 
 	var request terminalSessionRequest
 	if err := decodeTerminalSessionRequest(r, &request); err != nil {
@@ -127,6 +136,16 @@ func decodeTerminalSessionRequest(r *http.Request, request *terminalSessionReque
 	}
 
 	return nil
+}
+
+func requestContentTypeIsJSON(r *http.Request) bool {
+	contentType := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if contentType == "" {
+		return false
+	}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && strings.EqualFold(mediaType, "application/json")
 }
 
 func normalizedTerminalIDs(ids []string) []string {

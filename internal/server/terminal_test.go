@@ -81,7 +81,7 @@ func TestTerminalStatusAndTerminateEndpoints(t *testing.T) {
 	}
 
 	terminateRecorder := httptest.NewRecorder()
-	s.handleTerminalTerminate(terminateRecorder, httptest.NewRequest(http.MethodPost, "/api/terminal/terminate", strings.NewReader(`{"ids":["pane-1","pane-1","pane-2"]}`)))
+	s.handleTerminalTerminate(terminateRecorder, newTerminalSessionRequest(http.MethodPost, "/api/terminal/terminate", `{"ids":["pane-1","pane-1","pane-2"]}`))
 	if terminateRecorder.Code != http.StatusOK {
 		t.Fatalf("terminate code = %d body=%q, want %d", terminateRecorder.Code, terminateRecorder.Body.String(), http.StatusOK)
 	}
@@ -95,6 +95,53 @@ func TestTerminalStatusAndTerminateEndpoints(t *testing.T) {
 	}
 	if running := s.manager.RunningProcesses([]string{"pane-1"}); running["pane-1"] {
 		t.Fatalf("running after terminate = %#v, want pane-1 stopped", running)
+	}
+}
+
+func TestTerminalTerminateRejectsCrossOrigin(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessHasDescendant := processHasDescendant
+	processHasDescendant = func(pid int) bool { return pid == fakePID }
+	t.Cleanup(func() { processHasDescendant = oldProcessHasDescendant })
+
+	session := newFakeLiveSession(t, fakePID)
+	s := &Server{manager: &SessionManager{sessions: map[string]*Session{"pane-1": session}}}
+
+	request := newTerminalSessionRequest(http.MethodPost, "/api/terminal/terminate", `{"ids":["pane-1"]}`)
+	request.Header.Set("Origin", "http://evil.example")
+	request.Host = "localhost:6174"
+
+	recorder := httptest.NewRecorder()
+	s.handleTerminalTerminate(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("terminate code = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusForbidden)
+	}
+	if running := s.manager.RunningProcesses([]string{"pane-1"}); !running["pane-1"] {
+		t.Fatalf("running after rejected terminate = %#v, want pane-1 still running", running)
+	}
+}
+
+func TestTerminalTerminateRejectsNonJSONContentType(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessHasDescendant := processHasDescendant
+	processHasDescendant = func(pid int) bool { return pid == fakePID }
+	t.Cleanup(func() { processHasDescendant = oldProcessHasDescendant })
+
+	session := newFakeLiveSession(t, fakePID)
+	s := &Server{manager: &SessionManager{sessions: map[string]*Session{"pane-1": session}}}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/terminal/terminate", strings.NewReader(`{"ids":["pane-1"]}`))
+	request.Header.Set("Content-Type", "text/plain")
+
+	recorder := httptest.NewRecorder()
+	s.handleTerminalTerminate(recorder, request)
+	if recorder.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("terminate code = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusUnsupportedMediaType)
+	}
+	if running := s.manager.RunningProcesses([]string{"pane-1"}); !running["pane-1"] {
+		t.Fatalf("running after rejected terminate = %#v, want pane-1 still running", running)
 	}
 }
 
@@ -187,6 +234,12 @@ func httptestRequestWithOrigin(origin string, host string) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, "/api/terminal/ws", nil)
 	request.Header.Set("Origin", origin)
 	request.Host = host
+	return request
+}
+
+func newTerminalSessionRequest(method string, target string, body string) *http.Request {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	return request
 }
 
