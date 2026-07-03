@@ -61,6 +61,10 @@ func (s *Server) terminalThemes() []TerminalTheme {
 	return append([]TerminalTheme(nil), s.themes...)
 }
 
+func AvailableTerminalThemes() []TerminalTheme {
+	return collectTerminalThemes()
+}
+
 func collectTerminalThemes() []TerminalTheme {
 	themesByName := map[string]TerminalTheme{}
 	for _, theme := range bundledTerminalThemes() {

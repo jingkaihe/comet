@@ -12,6 +12,7 @@ type Config struct {
 	Host      string
 	Port      int
 	AuthToken string
+	Theme     string
 }
 
 func (c *Config) Validate() error {
@@ -21,7 +22,11 @@ func (c *Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return errors.New("port must be between 1 and 65535")
 	}
-	return ValidateAuthToken(c.AuthToken)
+	if err := ValidateAuthToken(c.AuthToken); err != nil {
+		return err
+	}
+
+	return ValidateThemeName(c.Theme)
 }
 
 func NewAuthToken() (string, error) {
@@ -49,6 +54,21 @@ func ValidateAuthToken(authToken string) error {
 		if !isAuthTokenRune(r) {
 			return errors.New("auth-token can only contain letters, numbers, and URL-safe punctuation (-._~)")
 		}
+	}
+
+	return nil
+}
+
+func ValidateThemeName(themeName string) error {
+	trimmed := strings.TrimSpace(themeName)
+	if themeName == "" {
+		return nil
+	}
+	if trimmed == "" {
+		return errors.New("theme cannot be empty")
+	}
+	if trimmed != themeName {
+		return errors.New("theme cannot contain leading or trailing whitespace")
 	}
 
 	return nil

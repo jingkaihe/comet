@@ -663,15 +663,15 @@ class CometApp {
         return false;
       }
       const parsed = await response.json() as Partial<PersistedState>;
-      if (!Array.isArray(parsed.tabs)) {
-        return false;
-      }
-      const tabs = parsed.tabs.map(normalizeTab).filter((tab): tab is TerminalTab => tab !== null);
       if (typeof parsed.theme === 'string' && this.themes.some((theme) => theme.name === parsed.theme)) {
         this.activeThemeName = parsed.theme;
       }
       this.applyThemeToShell();
       this.renderThemeOptions();
+      if (!Array.isArray(parsed.tabs)) {
+        return false;
+      }
+      const tabs = parsed.tabs.map(normalizeTab).filter((tab): tab is TerminalTab => tab !== null);
       if (tabs.length === 0) {
         if (parsed.initialized) {
           this.tabs = [];

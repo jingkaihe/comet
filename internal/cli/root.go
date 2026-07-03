@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jingkaihe/comet/internal/server"
 	"github.com/jingkaihe/comet/internal/version"
 	"github.com/spf13/cobra"
 )
@@ -16,6 +17,7 @@ func newRootCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(newServeCommand())
+	cmd.AddCommand(newListThemesCommand())
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -25,6 +27,18 @@ func newRootCommand() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func newListThemesCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list-themes",
+		Short: "List available terminal themes",
+		Run: func(cmd *cobra.Command, args []string) {
+			for _, theme := range server.AvailableTerminalThemes() {
+				fmt.Fprintln(cmd.OutOrStdout(), theme.Name)
+			}
+		},
+	}
 }
 
 func Execute() {

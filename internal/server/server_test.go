@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -114,6 +115,51 @@ func TestServerServesEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Comet") {
 		t.Fatalf("index body does not look like Comet app: %.80q", recorder.Body.String())
+	}
+}
+
+func TestServerUsesThemeAsInitialLayoutDefault(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(&Config{Host: "localhost", Port: 6174, Theme: "Dracula"})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer s.Close()
+
+	recorder := httptest.NewRecorder()
+	s.handleLayout(recorder, httptest.NewRequest(http.MethodGet, "/api/layout", nil))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET status = %d body=%q", recorder.Code, recorder.Body.String())
+	}
+
+	var state LayoutState
+	if err := json.NewDecoder(recorder.Body).Decode(&state); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if state.Theme != "Dracula" {
+		t.Fatalf("theme = %q, want Dracula", state.Theme)
+	}
+	if state.Initialized {
+		t.Fatal("initial default theme should not mark layout initialized")
+	}
+}
+
+func TestServerThemeMatchingIsCaseSensitive(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(&Config{Host: "localhost", Port: 6174, Theme: "dracula"})
+	if err == nil || !strings.Contains(err.Error(), `theme "dracula" not found`) {
+		t.Fatalf("New() error = %v, want case-sensitive missing theme error", err)
+	}
+}
+
+func TestServerRejectsUnknownDefaultTheme(t *testing.T) {
+	t.Parallel()
+
+	_, err := New(&Config{Host: "localhost", Port: 6174, Theme: "Missing Theme"})
+	if err == nil || !strings.Contains(err.Error(), `theme "Missing Theme" not found`) {
+		t.Fatalf("New() error = %v, want missing theme error", err)
 	}
 }
 

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,9 @@ func TestValidateServeConfig(t *testing.T) {
 		{name: "bad host", config: ServeConfig{Host: "bad host", Port: 6174}, wantErr: "invalid host"},
 		{name: "bad port", config: ServeConfig{Host: "localhost", Port: 80808}, wantErr: "port must be between"},
 		{name: "skip with token", config: ServeConfig{Host: "localhost", Port: 6174, SkipAuth: true, AuthToken: "secret"}, wantErr: "--auth-token cannot be used"},
+		{name: "theme", config: ServeConfig{Host: "localhost", Port: 6174, Theme: "Dracula"}},
+		{name: "blank theme", config: ServeConfig{Host: "localhost", Port: 6174, Theme: "   "}, wantErr: "theme cannot be empty"},
+		{name: "theme with whitespace", config: ServeConfig{Host: "localhost", Port: 6174, Theme: " Dracula"}, wantErr: "theme cannot contain"},
 	}
 
 	for _, tt := range tests {
@@ -48,5 +52,21 @@ func TestServeURLHelpers(t *testing.T) {
 	}
 	if got := serveURLWithToken("http://localhost:6174", "abc123"); got != "http://localhost:6174?token=abc123" {
 		t.Fatalf("serveURLWithToken() = %q", got)
+	}
+}
+
+func TestListThemesCommand(t *testing.T) {
+	t.Parallel()
+
+	cmd := newListThemesCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	body := out.String()
+	if !strings.Contains(body, "Comet Warm\n") || !strings.Contains(body, "Dracula\n") {
+		t.Fatalf("list-themes output missing bundled themes: %.200q", body)
 	}
 }

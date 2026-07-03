@@ -8,7 +8,9 @@ PTY sessions on the Go server.
 
 ```sh
 comet serve
+comet list-themes
 comet serve --host localhost --port 6174
+comet serve --theme Dracula
 comet serve --skip-auth
 ```
 
@@ -19,7 +21,7 @@ and prints a tokenized URL. Use `--skip-auth` for local development.
 
 - Click `+` to open a new terminal tab.
 - Double-click a tab to rename it.
-- Pick a terminal theme from the top bar. Comet reads local Ghostty-format themes from `~/.config/ghostty/themes/`.
+- Pick a terminal theme from the bottom bar. Comet reads local Ghostty-format themes from `~/.config/ghostty/themes/`. Use `comet list-themes` to see valid names, and `comet serve --theme <name>` to start with a default theme other than Comet Warm.
 - macOS: `Cmd+T` opens a tab, `Cmd+W` closes the active Comet tab, `Cmd+D` creates a vertical split, `Cmd+Shift+D` creates a horizontal split, and `Cmd+Option+Arrow` switches panes. `Ctrl+Shift+T` and `Ctrl+Shift+W` are also supported as browser-safe fallbacks.
 - Linux/Windows: `Ctrl+Shift+T` opens a tab, `Ctrl+Shift+W` closes the active Comet tab, `Ctrl+Shift+D` creates a vertical split, `Ctrl+Alt+D` creates a horizontal split, and `Ctrl+Alt+Arrow` switches panes.
 

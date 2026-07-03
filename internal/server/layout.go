@@ -40,6 +40,10 @@ func NewLayoutStore() *LayoutStore {
 	return &LayoutStore{}
 }
 
+func NewLayoutStoreWithDefaultTheme(themeName string) *LayoutStore {
+	return &LayoutStore{state: LayoutState{Theme: strings.TrimSpace(themeName)}}
+}
+
 func (s *LayoutStore) Get() LayoutState {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

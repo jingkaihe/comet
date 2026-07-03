@@ -50,6 +50,9 @@ func TestConfigValidate(t *testing.T) {
 		{name: "low port", config: Config{Host: "localhost"}, wantErr: "port must be between"},
 		{name: "high port", config: Config{Host: "localhost", Port: 70000}, wantErr: "port must be between"},
 		{name: "bad token", config: Config{Host: "localhost", Port: 6174, AuthToken: "bad token"}, wantErr: "URL-safe punctuation"},
+		{name: "theme", config: Config{Host: "localhost", Port: 6174, Theme: "Dracula"}},
+		{name: "blank theme", config: Config{Host: "localhost", Port: 6174, Theme: "   "}, wantErr: "theme cannot be empty"},
+		{name: "theme with whitespace", config: Config{Host: "localhost", Port: 6174, Theme: " Dracula"}, wantErr: "theme cannot contain"},
 	}
 
 	for _, tt := range tests {

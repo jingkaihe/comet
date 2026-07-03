@@ -38,6 +38,21 @@ func New(config *Config) (*Server, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
+	defaultThemeName := strings.TrimSpace(config.Theme)
+	var themes []TerminalTheme
+	if defaultThemeName != "" {
+		themes = collectTerminalThemes()
+		found := false
+		for _, theme := range themes {
+			if theme.Name == defaultThemeName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("theme %q not found", config.Theme)
+		}
+	}
 
 	staticFS, err := webassets.DistFS()
 	if err != nil {
@@ -48,8 +63,13 @@ func New(config *Config) (*Server, error) {
 		config:   config,
 		mux:      http.NewServeMux(),
 		manager:  NewSessionManager(context.Background()),
-		layout:   NewLayoutStore(),
+		layout:   NewLayoutStoreWithDefaultTheme(defaultThemeName),
 		staticFS: staticFS,
+	}
+	if themes != nil {
+		s.themesOnce.Do(func() {
+			s.themes = themes
+		})
 	}
 	s.routes()
 	return s, nil
