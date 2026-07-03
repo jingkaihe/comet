@@ -1,7 +1,17 @@
 import './styles.css';
-import { collectPaneIds, createTab, newId, removePaneFromLayout, seedCountersFromTabs, splitLayout, tabIndexFromShortcutKey } from './model';
+import {
+  collectPaneIds,
+  createTab,
+  findAdjacentPaneId,
+  newId,
+  paneDirectionFromShortcutKey,
+  removePaneFromLayout,
+  seedCountersFromTabs,
+  splitLayout,
+  tabIndexFromShortcutKey,
+} from './model';
 import { defaultTerminalTheme, TerminalPane } from './terminal-pane';
-import type { LayoutNode, SplitDirection, TerminalReadyEvent, TerminalTab, TerminalTheme, TerminalThemeColors } from './types';
+import type { LayoutNode, SplitDirection, TerminalReadyEvent, TerminalStatusResponse, TerminalTab, TerminalTheme, TerminalThemeColors } from './types';
 
 interface PersistedState {
   tabs: TerminalTab[];
@@ -12,6 +22,7 @@ interface PersistedState {
 }
 
 const DEFAULT_THEME_NAME = 'Comet Warm';
+const RUNNING_PROCESS_CLOSE_MESSAGE = 'The terminal still has a running process. If you close the tab the process will be killed';
 
 const themeColorKeys = [
   'foreground',
@@ -138,8 +149,8 @@ class CometApp {
     window.addEventListener('resize', () => this.fitActivePanes());
 
     this.hint.textContent = navigator.platform.toLowerCase().includes('mac')
-      ? '⌘T new tab · ⌘W close tab · ⌘D vertical split · ⌘⇧D horizontal split · ⌘1-9 switch tabs'
-      : 'Ctrl⇧T new tab · Ctrl⇧W close tab · Ctrl⇧D vertical split · Ctrl⌥D horizontal split · Alt1-9 switch tabs';
+      ? '⌘T new tab · ⌘W close tab · ⌘D vertical split · ⌘⇧D horizontal split · ⌘1-9 switch tabs · ⌘⌥←/→/↑/↓ switch panes'
+      : 'Ctrl⇧T new tab · Ctrl⇧W close tab · Ctrl⇧D vertical split · Ctrl⌥D horizontal split · Alt1-9 switch tabs · Ctrl⌥←/→/↑/↓ switch panes';
   }
 
   async start() {
@@ -204,6 +215,25 @@ class CometApp {
     this.saveState();
     this.render();
     void this.ensurePane(paneId).then((pane) => pane.focus());
+  }
+
+  private activateAdjacentPane(direction: ReturnType<typeof paneDirectionFromShortcutKey>) {
+    if (!direction) {
+      return;
+    }
+
+    const tab = this.activeTab;
+    if (!tab) {
+      return;
+    }
+
+    const paneId = findAdjacentPaneId(tab.layout, tab.activePaneId, direction);
+    if (!paneId) {
+      return;
+    }
+
+    this.setActivePane(paneId);
+    this.panes.get(paneId)?.focus();
   }
 
   private get activeTab() {
@@ -306,6 +336,68 @@ class CometApp {
     this.render();
   }
 
+  private async requestCloseTab(tabId: string) {
+    const tab = this.tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) {
+      return;
+    }
+
+    if (await this.tabHasRunningProcess(tab)) {
+      const confirmed = window.confirm(RUNNING_PROCESS_CLOSE_MESSAGE);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    await this.terminateTabProcesses(tab);
+    this.removeTab(tabId);
+  }
+
+  private async tabHasRunningProcess(tab: TerminalTab) {
+    const running = await this.fetchRunningPanes(tab.panes);
+    if (running === null) {
+      return true;
+    }
+    return tab.panes.some((paneId) => Boolean(running[paneId]));
+  }
+
+  private async fetchRunningPanes(paneIds: string[]): Promise<Record<string, boolean> | null> {
+    if (paneIds.length === 0) {
+      return {};
+    }
+
+    try {
+      const response = await fetch('/api/terminal/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: paneIds }),
+      });
+      if (!response.ok) {
+        return null;
+      }
+      const payload = await response.json() as Partial<TerminalStatusResponse>;
+      return payload.running && typeof payload.running === 'object' ? payload.running : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async terminateTabProcesses(tab: TerminalTab) {
+    if (tab.panes.length === 0) {
+      return;
+    }
+
+    try {
+      await fetch('/api/terminal/terminate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: tab.panes }),
+      });
+    } catch {
+      // The UI tab can still close; any detached server cleanup is best-effort.
+    }
+  }
+
   private render() {
     this.renderTabs();
     void this.renderWorkspace();
@@ -314,11 +406,14 @@ class CometApp {
   private renderTabs() {
     this.tabStrip.replaceChildren();
     this.tabs.forEach((tab, index) => {
+      const tabElement = document.createElement('div');
+      tabElement.className = `tab ${tab.id === this.activeTabId ? 'is-active' : ''}`;
+      tabElement.title = tab.title;
+
       const button = document.createElement('button');
-      button.className = `tab ${tab.id === this.activeTabId ? 'is-active' : ''}`;
+      button.className = 'tab-main';
       button.type = 'button';
       button.role = 'tab';
-      button.title = tab.title;
       button.ariaSelected = String(tab.id === this.activeTabId);
 
       const label = document.createElement('span');
@@ -329,9 +424,22 @@ class CometApp {
       number.textContent = `#${index + 1}`;
       button.append(label, number);
 
+      const close = document.createElement('button');
+      close.className = 'tab-close';
+      close.type = 'button';
+      close.ariaLabel = `Close ${tab.title}`;
+      close.title = 'Close tab';
+      close.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M18 6 6 18M6 6l12 12" /></svg>';
+      close.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.requestCloseTab(tab.id);
+      });
+      tabElement.append(close, button);
+
       button.addEventListener('click', () => this.activateTab(tab.id));
       button.addEventListener('dblclick', () => this.renameTab(tab.id));
-      this.tabStrip.append(button);
+      this.tabStrip.append(tabElement);
     });
   }
 
@@ -444,6 +552,23 @@ class CometApp {
     const key = event.key.toLowerCase();
     const isMac = navigator.platform.toLowerCase().includes('mac');
 
+    const paneDirection = paneDirectionFromShortcutKey(key);
+    if (paneDirection !== null) {
+      if (isMac && event.metaKey && event.altKey && !event.ctrlKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.activateAdjacentPane(paneDirection);
+        return;
+      }
+
+      if (!isMac && event.ctrlKey && event.altKey && !event.metaKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.activateAdjacentPane(paneDirection);
+        return;
+      }
+    }
+
     const tabIndex = tabIndexFromShortcutKey(key);
     if (tabIndex !== null) {
       if (isMac && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
@@ -482,7 +607,7 @@ class CometApp {
         event.preventDefault();
         event.stopImmediatePropagation();
         if (this.activeTabId) {
-          this.removeTab(this.activeTabId);
+          void this.requestCloseTab(this.activeTabId);
         }
         return;
       }
@@ -491,7 +616,7 @@ class CometApp {
         event.preventDefault();
         event.stopImmediatePropagation();
         if (this.activeTabId) {
-          this.removeTab(this.activeTabId);
+          void this.requestCloseTab(this.activeTabId);
         }
         return;
       }

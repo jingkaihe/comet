@@ -90,3 +90,7 @@ export type TerminalServerEvent =
   | TerminalExitEvent
   | TerminalReplayCompleteEvent
   | TerminalInfoEvent;
+
+export interface TerminalStatusResponse {
+  running: Record<string, boolean>;
+}

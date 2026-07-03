@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 const (
@@ -21,12 +23,15 @@ const (
 	defaultTerminalCols            = 100
 	maxTerminalRows                = 400
 	maxTerminalCols                = 400
+	processProbeTimeout            = 500 * time.Millisecond
 )
 
 var (
 	errSessionClosed = errors.New("terminal session is closed")
 	errClientSlow    = errors.New("terminal websocket client is not consuming output")
 )
+
+var processHasDescendant = defaultProcessHasDescendant
 
 type SessionManager struct {
 	ctx       context.Context
@@ -130,6 +135,70 @@ func (m *SessionManager) remove(id string, session *Session) {
 	if m.sessions[id] == session {
 		delete(m.sessions, id)
 	}
+}
+
+func (m *SessionManager) RunningProcesses(ids []string) map[string]bool {
+	statuses := make(map[string]bool, len(ids))
+	sessions := make(map[string]*Session, len(ids))
+
+	m.mu.Lock()
+	for _, id := range ids {
+		if _, ok := statuses[id]; ok {
+			continue
+		}
+		statuses[id] = false
+
+		session := m.sessions[id]
+		if session == nil {
+			continue
+		}
+
+		if !session.isAlive() {
+			delete(m.sessions, id)
+			continue
+		}
+
+		sessions[id] = session
+	}
+	m.mu.Unlock()
+
+	for id, session := range sessions {
+		statuses[id] = session.hasChildProcesses()
+	}
+
+	return statuses
+}
+
+func (m *SessionManager) Terminate(ids []string) []string {
+	terminatedIDs := make([]string, 0, len(ids))
+	sessions := make([]*Session, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+
+	m.mu.Lock()
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+
+		session := m.sessions[id]
+		if session == nil {
+			continue
+		}
+
+		delete(m.sessions, id)
+		if session.isAlive() {
+			terminatedIDs = append(terminatedIDs, id)
+			sessions = append(sessions, session)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, session := range sessions {
+		session.terminate()
+	}
+
+	return terminatedIDs
 }
 
 func (m *SessionManager) Close() {
@@ -237,6 +306,27 @@ func (s *Session) isAlive() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return !s.exited
+}
+
+func (s *Session) hasChildProcesses() bool {
+	if !s.isAlive() || s.cmd == nil || s.cmd.Process == nil || s.cmd.Process.Pid <= 0 {
+		return false
+	}
+
+	return processHasDescendant(s.cmd.Process.Pid)
+}
+
+func defaultProcessHasDescendant(pid int) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), processProbeTimeout)
+	defer cancel()
+
+	parent, err := process.NewProcessWithContext(ctx, int32(pid))
+	if err != nil {
+		return false
+	}
+
+	children, err := parent.ChildrenWithContext(ctx)
+	return err == nil && len(children) > 0
 }
 
 func (s *Session) WriteInput(payload []byte) error {

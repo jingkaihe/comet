@@ -60,6 +60,8 @@ func (s *Server) routes() {
 	s.mux.Handle("/api/health", s.authMiddleware(http.HandlerFunc(s.handleHealth)))
 	s.mux.Handle("/api/layout", s.authMiddleware(http.HandlerFunc(s.handleLayout)))
 	s.mux.Handle("/api/themes", s.authMiddleware(http.HandlerFunc(s.handleThemes)))
+	s.mux.Handle("/api/terminal/status", s.authMiddleware(http.HandlerFunc(s.handleTerminalStatus)))
+	s.mux.Handle("/api/terminal/terminate", s.authMiddleware(http.HandlerFunc(s.handleTerminalTerminate)))
 	s.mux.Handle("/api/terminal/ws", s.authMiddleware(http.HandlerFunc(s.handleTerminalWebSocket)))
 	s.mux.Handle("/", s.authMiddleware(http.HandlerFunc(s.handleIndex)))
 }

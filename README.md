@@ -20,8 +20,8 @@ and prints a tokenized URL. Use `--skip-auth` for local development.
 - Click `+` to open a new terminal tab.
 - Double-click a tab to rename it.
 - Pick a terminal theme from the top bar. Comet reads local Ghostty-format themes from `~/.config/ghostty/themes/`.
-- macOS: `Cmd+T` opens a tab, `Cmd+W` closes the active Comet tab, `Cmd+D` creates a vertical split, and `Cmd+Shift+D` creates a horizontal split. `Ctrl+Shift+T` and `Ctrl+Shift+W` are also supported as browser-safe fallbacks.
-- Linux/Windows: `Ctrl+Shift+T` opens a tab, `Ctrl+Shift+W` closes the active Comet tab, `Ctrl+Shift+D` creates a vertical split, and `Ctrl+Alt+D` creates a horizontal split.
+- macOS: `Cmd+T` opens a tab, `Cmd+W` closes the active Comet tab, `Cmd+D` creates a vertical split, `Cmd+Shift+D` creates a horizontal split, and `Cmd+Option+Arrow` switches panes. `Ctrl+Shift+T` and `Ctrl+Shift+W` are also supported as browser-safe fallbacks.
+- Linux/Windows: `Ctrl+Shift+T` opens a tab, `Ctrl+Shift+W` closes the active Comet tab, `Ctrl+Shift+D` creates a vertical split, `Ctrl+Alt+D` creates a horizontal split, and `Ctrl+Alt+Arrow` switches panes.
 
 To install the Ghostty themes from
 [`iTerm2-Color-Schemes`](https://github.com/mbadolato/iTerm2-Color-Schemes/tree/master/ghostty):

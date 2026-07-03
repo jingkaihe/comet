@@ -135,6 +135,7 @@ export class TerminalPane {
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private socket: WebSocket | null = null;
+  private disposed = false;
   private replayPendingWrites = 0;
   private replayCompleteReceived = false;
   private suppressInput = true;
@@ -172,6 +173,9 @@ export class TerminalPane {
   async connect() {
     const ghostty = await loadGhostty();
     await document.fonts?.load?.(`${FONT_SIZE}px ${FONT_FAMILY}`);
+    if (this.disposed) {
+      return;
+    }
 
     this.openTerminal(ghostty);
 
@@ -182,6 +186,10 @@ export class TerminalPane {
   }
 
   private openTerminal(ghostty: Ghostty) {
+    if (this.disposed) {
+      return;
+    }
+
     this.element.style.background = this.theme.background;
     this.host.style.background = this.theme.background;
 
@@ -253,18 +261,25 @@ export class TerminalPane {
   }
 
   dispose() {
+    this.disposed = true;
     this.resizeObserver?.disconnect();
     this.dataDisposable?.dispose();
     this.resizeDisposable?.dispose();
     this.socket?.close();
     this.terminal?.dispose();
+    this.socket = null;
+    this.terminal = null;
+    this.fitAddon = null;
   }
 
   private async reopenTerminal() {
-    if (!this.terminal) {
+    if (!this.terminal || this.disposed) {
       return;
     }
     const ghostty = await loadGhostty();
+    if (this.disposed) {
+      return;
+    }
 
     this.suppressInput = true;
     this.replayPendingWrites = 0;
@@ -301,7 +316,7 @@ export class TerminalPane {
   }
 
   private connectSocket() {
-    if (!this.terminal) {
+    if (!this.terminal || this.disposed) {
       return;
     }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -44,6 +45,18 @@ type terminalSocketRead struct {
 	Err         error
 }
 
+type terminalSessionRequest struct {
+	IDs []string `json:"ids"`
+}
+
+type terminalStatusResponse struct {
+	Running map[string]bool `json:"running"`
+}
+
+type terminalTerminateResponse struct {
+	Terminated []string `json:"terminated"`
+}
+
 type websocketWriter struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
@@ -65,6 +78,72 @@ func (w *websocketWriter) writeJSON(message terminalMessage) error {
 		return err
 	}
 	return w.Write(websocket.TextMessage, payload)
+}
+
+func (s *Server) handleTerminalStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request terminalSessionRequest
+	if err := decodeTerminalSessionRequest(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(terminalStatusResponse{Running: s.manager.RunningProcesses(request.IDs)})
+}
+
+func (s *Server) handleTerminalTerminate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var request terminalSessionRequest
+	if err := decodeTerminalSessionRequest(r, &request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(terminalTerminateResponse{Terminated: s.manager.Terminate(request.IDs)})
+}
+
+func decodeTerminalSessionRequest(r *http.Request, request *terminalSessionRequest) error {
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 64*1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(request); err != nil {
+		return errors.New("invalid terminal session request")
+	}
+
+	request.IDs = normalizedTerminalIDs(request.IDs)
+	if len(request.IDs) == 0 {
+		return errors.New("terminal session ids cannot be empty")
+	}
+
+	return nil
+}
+
+func normalizedTerminalIDs(ids []string) []string {
+	seen := make(map[string]struct{}, len(ids))
+	normalized := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		normalized = append(normalized, id)
+	}
+	return normalized
 }
 
 func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request) {

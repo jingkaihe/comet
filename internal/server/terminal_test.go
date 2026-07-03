@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +53,85 @@ func TestTerminalOriginAllowed(t *testing.T) {
 	request = httptestRequestWithOrigin("http://evil.example", "localhost:6174")
 	if s.terminalOriginAllowed(request) {
 		t.Fatal("cross-origin websocket should be rejected")
+	}
+}
+
+func TestTerminalStatusAndTerminateEndpoints(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessHasDescendant := processHasDescendant
+	processHasDescendant = func(pid int) bool { return pid == fakePID }
+	t.Cleanup(func() { processHasDescendant = oldProcessHasDescendant })
+
+	session := newFakeLiveSession(t, fakePID)
+	s := &Server{manager: &SessionManager{sessions: map[string]*Session{"pane-1": session}}}
+
+	statusRecorder := httptest.NewRecorder()
+	s.handleTerminalStatus(statusRecorder, httptest.NewRequest(http.MethodPost, "/api/terminal/status", strings.NewReader(`{"ids":[" pane-1 ","pane-2","pane-1"]}`)))
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d body=%q, want %d", statusRecorder.Code, statusRecorder.Body.String(), http.StatusOK)
+	}
+
+	var status terminalStatusResponse
+	if err := json.NewDecoder(statusRecorder.Body).Decode(&status); err != nil {
+		t.Fatalf("Decode(status) error = %v", err)
+	}
+	if !status.Running["pane-1"] || status.Running["pane-2"] {
+		t.Fatalf("running = %#v, want pane-1 running and pane-2 stopped", status.Running)
+	}
+
+	terminateRecorder := httptest.NewRecorder()
+	s.handleTerminalTerminate(terminateRecorder, httptest.NewRequest(http.MethodPost, "/api/terminal/terminate", strings.NewReader(`{"ids":["pane-1","pane-1","pane-2"]}`)))
+	if terminateRecorder.Code != http.StatusOK {
+		t.Fatalf("terminate code = %d body=%q, want %d", terminateRecorder.Code, terminateRecorder.Body.String(), http.StatusOK)
+	}
+
+	var terminated terminalTerminateResponse
+	if err := json.NewDecoder(terminateRecorder.Body).Decode(&terminated); err != nil {
+		t.Fatalf("Decode(terminated) error = %v", err)
+	}
+	if len(terminated.Terminated) != 1 || terminated.Terminated[0] != "pane-1" {
+		t.Fatalf("terminated = %#v, want [pane-1]", terminated.Terminated)
+	}
+	if running := s.manager.RunningProcesses([]string{"pane-1"}); running["pane-1"] {
+		t.Fatalf("running after terminate = %#v, want pane-1 stopped", running)
+	}
+}
+
+func TestTerminalStatusTreatsIdleShellAsNotRunning(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessHasDescendant := processHasDescendant
+	processHasDescendant = func(int) bool { return false }
+	t.Cleanup(func() { processHasDescendant = oldProcessHasDescendant })
+
+	session := newFakeLiveSession(t, fakePID)
+	s := &Server{manager: &SessionManager{sessions: map[string]*Session{"pane-1": session}}}
+
+	statusRecorder := httptest.NewRecorder()
+	s.handleTerminalStatus(statusRecorder, httptest.NewRequest(http.MethodPost, "/api/terminal/status", strings.NewReader(`{"ids":["pane-1"]}`)))
+	if statusRecorder.Code != http.StatusOK {
+		t.Fatalf("status code = %d body=%q, want %d", statusRecorder.Code, statusRecorder.Body.String(), http.StatusOK)
+	}
+
+	var status terminalStatusResponse
+	if err := json.NewDecoder(statusRecorder.Body).Decode(&status); err != nil {
+		t.Fatalf("Decode(status) error = %v", err)
+	}
+	if status.Running["pane-1"] {
+		t.Fatalf("running = %#v, want idle shell stopped", status.Running)
+	}
+}
+
+func TestTerminalSessionRequestRejectsEmptyIDs(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{manager: &SessionManager{sessions: map[string]*Session{}}}
+	recorder := httptest.NewRecorder()
+	s.handleTerminalStatus(recorder, httptest.NewRequest(http.MethodPost, "/api/terminal/status", strings.NewReader(`{"ids":[" "]}`)))
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status code = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
 
@@ -106,4 +188,24 @@ func httptestRequestWithOrigin(origin string, host string) *http.Request {
 	request.Header.Set("Origin", origin)
 	request.Host = host
 	return request
+}
+
+func newFakeLiveSession(t *testing.T, pid int) *Session {
+	t.Helper()
+
+	readFile, writeFile, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = readFile.Close()
+		_ = writeFile.Close()
+	})
+
+	return &Session{
+		cancel: func() {},
+		cmd:    &exec.Cmd{Process: &os.Process{Pid: pid}},
+		ptmx:   readFile,
+		done:   make(chan struct{}),
+	}
 }
