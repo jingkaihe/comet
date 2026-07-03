@@ -128,14 +128,15 @@ class CometApp {
     this.root.innerHTML = `
       <header class="topbar" aria-label="Terminal tabs">
         <div class="tab-strip" role="tablist"></div>
-        <label class="theme-picker" title="Terminal theme">
-          <span class="theme-picker-label">Theme</span>
-          <select class="theme-select" aria-label="Terminal theme"></select>
-        </label>
         <button class="new-tab" type="button" aria-label="New terminal tab" title="New tab"></button>
       </header>
       <main class="workspace" aria-label="Terminal workspace"></main>
-      <footer class="hint"></footer>
+      <footer class="statusbar">
+        <div class="hint"></div>
+        <label class="theme-picker" title="Terminal theme">
+          <select class="theme-select" aria-label="Terminal theme"></select>
+        </label>
+      </footer>
     `;
     this.tabStrip = this.mustQuery('.tab-strip');
     this.themeSelect = this.mustQuery('.theme-select');
