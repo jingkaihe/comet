@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -138,20 +139,48 @@ func (s *Server) Close() error {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+	if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+		content, err := fs.ReadFile(s.staticFS, "index.html")
+		if err != nil {
+			http.Error(w, "failed to load application", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(content)
+		return
+	}
+
+	name := strings.TrimPrefix(r.URL.Path, "/")
+	if name == "" || strings.Contains(name, "/") {
 		http.NotFound(w, r)
 		return
 	}
 
-	content, err := fs.ReadFile(s.staticFS, "index.html")
+	content, err := fs.ReadFile(s.staticFS, name)
 	if err != nil {
-		http.Error(w, "failed to load application", http.StatusInternalServerError)
+		http.NotFound(w, r)
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	_, _ = w.Write(content)
+	if contentType := rootAssetContentType(name); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(content))
+}
+
+func rootAssetContentType(name string) string {
+	switch name {
+	case "manifest.webmanifest":
+		return "application/manifest+json"
+	case "favicon.ico":
+		return "image/x-icon"
+	case "favicon.svg":
+		return "image/svg+xml"
+	default:
+		return ""
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

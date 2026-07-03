@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestAuthMiddlewareAllowsSkipAuth(t *testing.T) {
@@ -115,6 +116,75 @@ func TestServerServesEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Comet") {
 		t.Fatalf("index body does not look like Comet app: %.80q", recorder.Body.String())
+	}
+}
+
+func TestServerServesRootAssets(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{
+		config: &Config{},
+		mux:    http.NewServeMux(),
+		staticFS: fstest.MapFS{
+			"index.html": {
+				Data: []byte("<!doctype html><title>Comet</title>"),
+			},
+			"manifest.webmanifest": {
+				Data: []byte(`{"name": "Comet"}`),
+			},
+			"favicon.svg": {
+				Data: []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+			},
+			"favicon.ico": {
+				Data: []byte{0x00, 0x00, 0x01, 0x00},
+			},
+		},
+	}
+	s.routes()
+
+	tests := []struct {
+		path        string
+		contentType string
+		body        string
+	}{
+		{path: "/manifest.webmanifest", contentType: "application/manifest+json", body: `"name": "Comet"`},
+		{path: "/favicon.svg", contentType: "image/svg+xml", body: "<svg"},
+		{path: "/favicon.ico", contentType: "image/x-icon", body: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			t.Parallel()
+
+			recorder := httptest.NewRecorder()
+			s.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tt.path, nil))
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d body=%q", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			if contentType := recorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, tt.contentType) {
+				t.Fatalf("Content-Type = %q, want prefix %q", contentType, tt.contentType)
+			}
+			if tt.body != "" && !strings.Contains(recorder.Body.String(), tt.body) {
+				t.Fatalf("body = %.120q, want substring %q", recorder.Body.String(), tt.body)
+			}
+		})
+	}
+}
+
+func TestServerDoesNotServeNestedUnknownStaticPathsFromIndex(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(&Config{Host: "localhost", Port: 6174})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	recorder := httptest.NewRecorder()
+	s.mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/missing/favicon.svg", nil))
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
 }
 

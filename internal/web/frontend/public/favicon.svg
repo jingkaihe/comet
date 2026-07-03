@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" shape-rendering="crispEdges">
+  <title>Comet</title>
+  <rect width="800" height="800" fill="#17130f" />
+  <g fill="#f97316">
+    <rect x="112" y="292" width="316" height="72" />
+    <rect x="112" y="436" width="316" height="72" />
+    <rect x="384" y="148" width="88" height="72" />
+    <rect x="472" y="220" width="88" height="72" />
+    <rect x="560" y="292" width="88" height="72" />
+    <rect x="648" y="364" width="88" height="72" />
+    <rect x="560" y="436" width="88" height="72" />
+    <rect x="472" y="508" width="88" height="72" />
+    <rect x="384" y="580" width="88" height="72" />
+  </g>
+</svg>
