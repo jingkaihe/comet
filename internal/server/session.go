@@ -256,13 +256,14 @@ func (s *Session) ReadyMessage() terminalMessage {
 	}
 
 	return terminalMessage{
-		Type: "ready",
-		ID:   s.id,
-		CWD:  s.cwd,
-		Name: s.shellName,
-		PID:  pid,
-		Host: hostname(),
-		User: username(),
+		Type:       "ready",
+		ID:         s.id,
+		CWD:        s.cwd,
+		DisplayCWD: displayCWD(s.cwd),
+		Name:       s.shellName,
+		PID:        pid,
+		Host:       hostname(),
+		User:       username(),
 	}
 }
 
@@ -493,6 +494,32 @@ func resolveCWD(raw string) (string, error) {
 	}
 
 	return filepath.Abs(raw)
+}
+
+func displayCWD(cwd string) string {
+	path := strings.TrimSpace(cwd)
+	if path == "" {
+		return "~"
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+
+	home = strings.TrimSpace(home)
+	if home == "" || home == string(os.PathSeparator) {
+		return path
+	}
+
+	if path == home {
+		return "~"
+	}
+	if strings.HasPrefix(path, home+string(os.PathSeparator)) {
+		return "~" + path[len(home):]
+	}
+
+	return path
 }
 
 func resolveShell() (string, string) {

@@ -9,13 +9,14 @@ comet serve
 comet list-themes
 comet serve --host localhost --port 6174
 comet serve --theme Dracula
+comet serve --auth-token-file ~/.config/comet/token
 comet serve --skip-auth
 comet serve --background
 comet status
 comet down
 ```
 
-By default, `comet serve` binds to `localhost:6174`, generates an access token, and prints a tokenized URL. Use `--skip-auth` for local development. Use `comet serve --background` to detach the server from the current terminal; `comet status` prints the running background server and access URL, and `comet down` stops it.
+By default, `comet serve` binds to `localhost:6174`, generates an access token, and prints a tokenized URL. Use `--auth-token-file` to read a stable token from a file, or `--skip-auth` for local development. Use `comet serve --background` to detach the server from the current terminal; `comet status` prints the running background server and access URL, and `comet down` stops it.
 
 ## Terminal UI
 

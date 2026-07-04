@@ -22,7 +22,7 @@ func TestValidateServeConfig(t *testing.T) {
 		{name: "empty host", config: ServeConfig{Port: 6174}, wantErr: "host cannot be empty"},
 		{name: "bad host", config: ServeConfig{Host: "bad host", Port: 6174}, wantErr: "invalid host"},
 		{name: "bad port", config: ServeConfig{Host: "localhost", Port: 80808}, wantErr: "port must be between"},
-		{name: "skip with token", config: ServeConfig{Host: "localhost", Port: 6174, SkipAuth: true, AuthToken: "secret"}, wantErr: "--auth-token cannot be used"},
+		{name: "token file", config: ServeConfig{Host: "localhost", Port: 6174, AuthTokenFile: "/tmp/comet-token"}},
 		{name: "theme", config: ServeConfig{Host: "localhost", Port: 6174, Theme: "Dracula"}},
 		{name: "blank theme", config: ServeConfig{Host: "localhost", Port: 6174, Theme: "   "}, wantErr: "theme cannot be empty"},
 		{name: "theme with whitespace", config: ServeConfig{Host: "localhost", Port: 6174, Theme: " Dracula"}, wantErr: "theme cannot contain"},
@@ -40,6 +40,59 @@ func TestValidateServeConfig(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
 				t.Fatalf("validateServeConfig() error = %v, want substring %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestServeCommandRejectsMutuallyExclusiveFlags(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "auth token with skip auth",
+			args: []string{"--auth-token", "secret", "--skip-auth"},
+			want: []string{"auth-token", "skip-auth"},
+		},
+		{
+			name: "auth token file with skip auth",
+			args: []string{"--auth-token-file", "/tmp/comet-token", "--skip-auth"},
+			want: []string{"auth-token-file", "skip-auth"},
+		},
+		{
+			name: "auth token with token file",
+			args: []string{"--auth-token", "secret", "--auth-token-file", "/tmp/comet-token"},
+			want: []string{"auth-token", "auth-token-file"},
+		},
+		{
+			name: "background with child mode",
+			args: []string{"--background", "--background-child"},
+			want: []string{"background", "background-child"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := newServeCommand()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("Execute() error = nil, want mutually exclusive flag error")
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Execute() error = %v, want substring %q", err, want)
+				}
 			}
 		})
 	}
@@ -63,16 +116,22 @@ func TestBackgroundServeArgs(t *testing.T) {
 	t.Parallel()
 
 	args := backgroundServeArgs(&ServeConfig{
-		Host:       "localhost",
-		Port:       6174,
-		AuthToken:  "secret",
-		Theme:      "Dracula",
-		InstanceID: "instance",
+		Host:          "localhost",
+		Port:          6174,
+		AuthToken:     "secret",
+		AuthTokenFile: "/tmp/comet-token",
+		Theme:         "Dracula",
+		InstanceID:    "instance",
 	})
 	joined := strings.Join(args, " ")
-	for _, want := range []string{"serve", "--host localhost", "--port 6174", "--background-child", "--instance-id instance", "--auth-token secret", "--theme Dracula"} {
+	for _, want := range []string{"serve", "--host localhost", "--port 6174", "--background-child", "--instance-id instance", "--auth-token-file /tmp/comet-token", "--theme Dracula"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("backgroundServeArgs() = %q, want substring %q", joined, want)
+		}
+	}
+	for _, arg := range args {
+		if arg == "--auth-token" || arg == "secret" {
+			t.Fatalf("backgroundServeArgs() leaked auth token in args: %q", joined)
 		}
 	}
 
@@ -80,6 +139,73 @@ func TestBackgroundServeArgs(t *testing.T) {
 	joined = strings.Join(args, " ")
 	if !strings.Contains(joined, "--skip-auth") || strings.Contains(joined, "--auth-token") {
 		t.Fatalf("backgroundServeArgs(skip auth) = %q", joined)
+	}
+}
+
+func TestBackgroundAuthTokenFileRoundTrip(t *testing.T) {
+	withBackgroundCacheDir(t, t.TempDir())
+
+	path, cleanup, err := writeBackgroundAuthTokenFile("instance", "secret")
+	if err != nil {
+		t.Fatalf("writeBackgroundAuthTokenFile() error = %v", err)
+	}
+	defer cleanup()
+
+	dir, err := backgroundAuthTokenDir()
+	if err != nil {
+		t.Fatalf("backgroundAuthTokenDir() error = %v", err)
+	}
+	if filepath.Dir(path) != dir {
+		t.Fatalf("auth token file dir = %q, want %q", filepath.Dir(path), dir)
+	}
+	if filepath.Base(path) != "instance.token" {
+		t.Fatalf("auth token file name = %q, want instance.token", filepath.Base(path))
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("auth token dir stat error = %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("auth token dir permissions = %#o, want 0700", got)
+	}
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("auth token file stat error = %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("auth token file permissions = %#o, want 0600", got)
+	}
+
+	authToken, err := resolveServeAuthToken(&ServeConfig{AuthTokenFile: path, backgroundChild: true})
+	if err != nil {
+		t.Fatalf("resolveServeAuthToken() error = %v", err)
+	}
+	if authToken != "secret" {
+		t.Fatalf("resolveServeAuthToken() = %q, want secret", authToken)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("auth token file stat error = %v, want not exist", err)
+	}
+}
+
+func TestResolveServeAuthTokenFromFileKeepsUserFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("secret\n"), 0o600); err != nil {
+		t.Fatalf("write auth token file: %v", err)
+	}
+
+	authToken, err := resolveServeAuthToken(&ServeConfig{AuthTokenFile: path})
+	if err != nil {
+		t.Fatalf("resolveServeAuthToken() error = %v", err)
+	}
+	if authToken != "secret" {
+		t.Fatalf("resolveServeAuthToken() = %q, want secret", authToken)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("auth token file stat error = %v", err)
 	}
 }
 

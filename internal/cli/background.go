@@ -25,6 +25,7 @@ const (
 	backgroundStopTimeout   = 5 * time.Second
 )
 
+// backgroundCacheDir is a small test hook for isolating background state files.
 var backgroundCacheDir = os.UserCacheDir
 
 type backgroundState struct {
@@ -68,9 +69,11 @@ func newDownCommand() *cobra.Command {
 }
 
 func runServeBackground(ctx context.Context, config *ServeConfig, out io.Writer) error {
-	authToken := strings.TrimSpace(config.AuthToken)
+	authToken, err := resolveServeAuthToken(config)
+	if err != nil {
+		return err
+	}
 	if !config.SkipAuth && authToken == "" {
-		var err error
 		authToken, err = server.NewToken()
 		if err != nil {
 			return fmt.Errorf("failed to generate auth token: %w", err)
@@ -113,8 +116,18 @@ func runServeBackground(ctx context.Context, config *ServeConfig, out io.Writer)
 	}
 
 	childConfig := *config
-	childConfig.AuthToken = authToken
+	childConfig.AuthToken = ""
+	childConfig.AuthTokenFile = ""
 	childConfig.InstanceID = instanceID
+	if authToken != "" {
+		tokenFile, cleanup, err := writeBackgroundAuthTokenFile(instanceID, authToken)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		childConfig.AuthTokenFile = tokenFile
+	}
+
 	cmd := exec.Command(executable, backgroundServeArgs(&childConfig)...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -237,8 +250,8 @@ func backgroundServeArgs(config *ServeConfig) []string {
 		"--background-child",
 		"--instance-id", config.InstanceID,
 	}
-	if config.AuthToken != "" {
-		args = append(args, "--auth-token", config.AuthToken)
+	if config.AuthTokenFile != "" {
+		args = append(args, "--auth-token-file", config.AuthTokenFile)
 	}
 	if config.SkipAuth {
 		args = append(args, "--skip-auth")
@@ -247,6 +260,48 @@ func backgroundServeArgs(config *ServeConfig) []string {
 		args = append(args, "--theme", config.Theme)
 	}
 	return args
+}
+
+func writeBackgroundAuthTokenFile(instanceID string, authToken string) (string, func(), error) {
+	dir, err := backgroundAuthTokenDir()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("create background auth token directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", nil, fmt.Errorf("set background auth token directory permissions: %w", err)
+	}
+
+	tokenPath := filepath.Join(dir, instanceID+".token")
+	tokenFile, err := os.OpenFile(tokenPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", nil, fmt.Errorf("create background auth token file: %w", err)
+	}
+	cleanup := func() {
+		_ = os.Remove(tokenPath)
+	}
+
+	if _, err := io.WriteString(tokenFile, authToken+"\n"); err != nil {
+		_ = tokenFile.Close()
+		cleanup()
+		return "", nil, fmt.Errorf("write background auth token: %w", err)
+	}
+	if err := tokenFile.Close(); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("close background auth token file: %w", err)
+	}
+
+	return tokenPath, cleanup, nil
+}
+
+func backgroundAuthTokenDir() (string, error) {
+	dir, err := backgroundDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "auth"), nil
 }
 
 func inspectBackgroundServer(ctx context.Context, record *backgroundServer) (*backgroundServer, error) {

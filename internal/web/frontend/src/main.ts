@@ -279,9 +279,7 @@ class CometApp {
     if (!tab || tab.customTitle || tab.panes[0] !== paneId) {
       return;
     }
-    const cwd = event.cwd || '~';
-    const userHost = [event.user, event.host].filter(Boolean).join('@');
-    tab.title = userHost ? `${userHost}:${cwd}` : cwd;
+    tab.title = event.displayCwd || event.cwd || '~';
     this.saveState();
     this.renderTabs();
   }

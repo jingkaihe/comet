@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,34 @@ func TestTerminalDimensionsAreBounded(t *testing.T) {
 	}
 	if got := boundedCols(maxTerminalCols + 1); got != maxTerminalCols {
 		t.Fatalf("boundedCols(max+1) = %d, want %d", got, maxTerminalCols)
+	}
+}
+
+func TestDisplayCWDShortensHomePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	want := "~" + string(os.PathSeparator) + filepath.Join("xxx", "yyy")
+	if got := displayCWD(filepath.Join(home, "xxx", "yyy")); got != want {
+		t.Fatalf("displayCWD(home child) = %q, want %q", got, want)
+	}
+	if got := displayCWD(home); got != "~" {
+		t.Fatalf("displayCWD(home) = %q, want ~", got)
+	}
+}
+
+func TestDisplayCWDPreservesNonHomePaths(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	path := filepath.Join(t.TempDir(), "var", "log")
+	if got := displayCWD(path); got != path {
+		t.Fatalf("displayCWD(non-home) = %q, want %q", got, path)
+	}
+	if got := displayCWD(""); got != "~" {
+		t.Fatalf("displayCWD(empty) = %q, want ~", got)
 	}
 }
 

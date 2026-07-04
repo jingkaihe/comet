@@ -65,6 +65,7 @@ export interface TerminalReadyEvent {
   type: 'ready';
   id: string;
   cwd?: string;
+  displayCwd?: string;
   name?: string;
   pid?: number;
   host?: string;

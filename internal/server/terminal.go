@@ -26,18 +26,19 @@ const (
 )
 
 type terminalMessage struct {
-	Type string `json:"type"`
-	ID   string `json:"id,omitempty"`
-	Data string `json:"data,omitempty"`
-	Rows int    `json:"rows,omitempty"`
-	Cols int    `json:"cols,omitempty"`
-	Code int    `json:"code,omitempty"`
-	CWD  string `json:"cwd,omitempty"`
-	Name string `json:"name,omitempty"`
-	PID  int    `json:"pid,omitempty"`
-	Text string `json:"text,omitempty"`
-	Host string `json:"host,omitempty"`
-	User string `json:"user,omitempty"`
+	Type       string `json:"type"`
+	ID         string `json:"id,omitempty"`
+	Data       string `json:"data,omitempty"`
+	Rows       int    `json:"rows,omitempty"`
+	Cols       int    `json:"cols,omitempty"`
+	Code       int    `json:"code,omitempty"`
+	CWD        string `json:"cwd,omitempty"`
+	DisplayCWD string `json:"displayCwd,omitempty"`
+	Name       string `json:"name,omitempty"`
+	PID        int    `json:"pid,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Host       string `json:"host,omitempty"`
+	User       string `json:"user,omitempty"`
 }
 
 type terminalSocketRead struct {
