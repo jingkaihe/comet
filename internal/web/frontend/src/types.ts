@@ -66,10 +66,20 @@ export interface TerminalReadyEvent {
   id: string;
   cwd?: string;
   displayCwd?: string;
+  foregroundCommand?: string;
+  displayTitle?: string;
   name?: string;
   pid?: number;
   host?: string;
   user?: string;
+}
+
+export interface TerminalStatusEvent {
+  type: 'status';
+  cwd?: string;
+  displayCwd?: string;
+  foregroundCommand?: string;
+  displayTitle?: string;
 }
 
 export interface TerminalExitEvent {
@@ -88,6 +98,7 @@ export interface TerminalInfoEvent {
 
 export type TerminalServerEvent =
   | TerminalReadyEvent
+  | TerminalStatusEvent
   | TerminalExitEvent
   | TerminalReplayCompleteEvent
   | TerminalInfoEvent;

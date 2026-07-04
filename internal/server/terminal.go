@@ -26,19 +26,21 @@ const (
 )
 
 type terminalMessage struct {
-	Type       string `json:"type"`
-	ID         string `json:"id,omitempty"`
-	Data       string `json:"data,omitempty"`
-	Rows       int    `json:"rows,omitempty"`
-	Cols       int    `json:"cols,omitempty"`
-	Code       int    `json:"code,omitempty"`
-	CWD        string `json:"cwd,omitempty"`
-	DisplayCWD string `json:"displayCwd,omitempty"`
-	Name       string `json:"name,omitempty"`
-	PID        int    `json:"pid,omitempty"`
-	Text       string `json:"text,omitempty"`
-	Host       string `json:"host,omitempty"`
-	User       string `json:"user,omitempty"`
+	Type              string `json:"type"`
+	ID                string `json:"id,omitempty"`
+	Data              string `json:"data,omitempty"`
+	Rows              int    `json:"rows,omitempty"`
+	Cols              int    `json:"cols,omitempty"`
+	Code              int    `json:"code,omitempty"`
+	CWD               string `json:"cwd,omitempty"`
+	DisplayCWD        string `json:"displayCwd,omitempty"`
+	ForegroundCommand string `json:"foregroundCommand,omitempty"`
+	DisplayTitle      string `json:"displayTitle,omitempty"`
+	Name              string `json:"name,omitempty"`
+	PID               int    `json:"pid,omitempty"`
+	Text              string `json:"text,omitempty"`
+	Host              string `json:"host,omitempty"`
+	User              string `json:"user,omitempty"`
 }
 
 type terminalSocketRead struct {
@@ -62,6 +64,16 @@ type terminalTerminateResponse struct {
 type websocketWriter struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+}
+
+func terminalStatusMessage(status processStatus) terminalMessage {
+	return terminalMessage{
+		Type:              "status",
+		CWD:               status.CWD,
+		DisplayCWD:        status.DisplayCWD,
+		ForegroundCommand: status.ForegroundCommand,
+		DisplayTitle:      status.DisplayTitle,
+	}
 }
 
 func (w *websocketWriter) Write(messageType int, payload []byte) error {
@@ -213,7 +225,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 	if err := session.Resize(rows, cols); err != nil && !errors.Is(err, errSessionClosed) {
 		return
 	}
-	if err := writer.writeJSON(session.ReadyMessage()); err != nil {
+	if err := writer.writeJSON(session.ReadyMessage(r.Context())); err != nil {
 		return
 	}
 	if len(replay) > 0 {
@@ -234,6 +246,29 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 				return
 			case <-ticker.C:
 				if err := writer.Write(websocket.PingMessage, nil); err != nil {
+					attachment.notify(err)
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(terminalStatusProbeInterval)
+		defer ticker.Stop()
+
+		lastStatus := processStatus{}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				status := session.ProcessStatus(ctx)
+				if status == lastStatus {
+					continue
+				}
+				lastStatus = status
+				if err := writer.writeJSON(terminalStatusMessage(status)); err != nil {
 					attachment.notify(err)
 					return
 				}

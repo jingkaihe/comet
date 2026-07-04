@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -196,6 +197,65 @@ func TestTerminalStatusTreatsIdleShellAsNotRunning(t *testing.T) {
 	}
 	if status.Running["pane-1"] {
 		t.Fatalf("running = %#v, want idle shell stopped", status.Running)
+	}
+}
+
+func TestSessionProcessStatusUsesForegroundCommandAsTitle(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessSnapshot := processSnapshot
+	processSnapshot = func(_ context.Context, pid int) processSnapshotResult {
+		if pid != fakePID {
+			t.Fatalf("processSnapshot pid = %d, want %d", pid, fakePID)
+		}
+		return processSnapshotResult{cwd: "/tmp/comet", foregroundCommand: "vim foo"}
+	}
+	t.Cleanup(func() { processSnapshot = oldProcessSnapshot })
+
+	session := newFakeLiveSession(t, fakePID)
+	session.cwd = "/tmp"
+
+	status := session.ProcessStatus(context.Background())
+	if status.CWD != "/tmp/comet" || status.DisplayCWD != "/tmp/comet" {
+		t.Fatalf("cwd status = %#v, want live cwd /tmp/comet", status)
+	}
+	if status.ForegroundCommand != "vim foo" || status.DisplayTitle != "vim foo" {
+		t.Fatalf("command status = %#v, want vim foo title", status)
+	}
+	if session.knownCWD() != "/tmp/comet" {
+		t.Fatalf("known cwd = %q, want live cwd cached", session.knownCWD())
+	}
+}
+
+func TestSessionProcessStatusFallsBackToCWD(t *testing.T) {
+	const fakePID = 99999999
+
+	oldProcessSnapshot := processSnapshot
+	processSnapshot = func(_ context.Context, pid int) processSnapshotResult {
+		if pid != fakePID {
+			t.Fatalf("processSnapshot pid = %d, want %d", pid, fakePID)
+		}
+		return processSnapshotResult{cwd: "/tmp/comet"}
+	}
+	t.Cleanup(func() { processSnapshot = oldProcessSnapshot })
+
+	session := newFakeLiveSession(t, fakePID)
+	session.cwd = "/tmp"
+
+	status := session.ProcessStatus(context.Background())
+	if status.ForegroundCommand != "" {
+		t.Fatalf("foreground command = %q, want empty", status.ForegroundCommand)
+	}
+	if status.DisplayTitle != "/tmp/comet" {
+		t.Fatalf("display title = %q, want cwd title", status.DisplayTitle)
+	}
+}
+
+func TestFormatCommandShortensExecutableAndQuotesArguments(t *testing.T) {
+	got := formatCommand([]string{"/usr/bin/vim", "foo bar", "plain"})
+	want := "vim 'foo bar' plain"
+	if got != want {
+		t.Fatalf("formatCommand() = %q, want %q", got, want)
 	}
 }
 

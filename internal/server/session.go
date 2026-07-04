@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +25,8 @@ const (
 	maxTerminalRows                = 400
 	maxTerminalCols                = 400
 	processProbeTimeout            = 500 * time.Millisecond
+	terminalStatusProbeInterval    = time.Second
+	terminalTitleMaxLength         = 80
 )
 
 var (
@@ -32,6 +35,20 @@ var (
 )
 
 var processHasDescendant = defaultProcessHasDescendant
+
+var processSnapshot = defaultProcessSnapshot
+
+type processStatus struct {
+	CWD               string
+	DisplayCWD        string
+	ForegroundCommand string
+	DisplayTitle      string
+}
+
+type processSnapshotResult struct {
+	cwd               string
+	foregroundCommand string
+}
 
 type SessionManager struct {
 	ctx       context.Context
@@ -249,22 +266,75 @@ func (s *Session) start(ctx context.Context) {
 	go s.wait(ctx)
 }
 
-func (s *Session) ReadyMessage() terminalMessage {
+func (s *Session) ReadyMessage(ctx context.Context) terminalMessage {
 	pid := 0
 	if s.cmd != nil && s.cmd.Process != nil {
 		pid = s.cmd.Process.Pid
 	}
+	status := s.ProcessStatus(ctx)
 
 	return terminalMessage{
-		Type:       "ready",
-		ID:         s.id,
-		CWD:        s.cwd,
-		DisplayCWD: displayCWD(s.cwd),
-		Name:       s.shellName,
-		PID:        pid,
-		Host:       hostname(),
-		User:       username(),
+		Type:              "ready",
+		ID:                s.id,
+		CWD:               status.CWD,
+		DisplayCWD:        status.DisplayCWD,
+		ForegroundCommand: status.ForegroundCommand,
+		DisplayTitle:      status.DisplayTitle,
+		Name:              s.shellName,
+		PID:               pid,
+		Host:              hostname(),
+		User:              username(),
 	}
+}
+
+func (s *Session) ProcessStatus(ctx context.Context) processStatus {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cwd := s.knownCWD()
+	foregroundCommand := ""
+
+	if s.isAlive() && s.cmd != nil && s.cmd.Process != nil && s.cmd.Process.Pid > 0 {
+		probeCtx, cancel := context.WithTimeout(ctx, processProbeTimeout)
+		snapshot := processSnapshot(probeCtx, s.cmd.Process.Pid)
+		cancel()
+
+		if strings.TrimSpace(snapshot.cwd) != "" {
+			cwd = snapshot.cwd
+			s.setCWD(cwd)
+		}
+		foregroundCommand = snapshot.foregroundCommand
+	}
+
+	cwd = strings.TrimSpace(cwd)
+	if cwd == "" {
+		cwd = "~"
+	}
+	displayCWD := displayCWD(cwd)
+	displayTitle := displayCWD
+	if foregroundCommand != "" {
+		displayTitle = foregroundCommand
+	}
+
+	return processStatus{
+		CWD:               cwd,
+		DisplayCWD:        displayCWD,
+		ForegroundCommand: foregroundCommand,
+		DisplayTitle:      displayTitle,
+	}
+}
+
+func (s *Session) setCWD(cwd string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cwd = cwd
+}
+
+func (s *Session) knownCWD() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cwd
 }
 
 func (s *Session) Attach() (*Attachment, []byte, error) {
@@ -328,6 +398,107 @@ func defaultProcessHasDescendant(pid int) bool {
 
 	children, err := parent.ChildrenWithContext(ctx)
 	return err == nil && len(children) > 0
+}
+
+func defaultProcessSnapshot(ctx context.Context, pid int) processSnapshotResult {
+	root, err := process.NewProcessWithContext(ctx, int32(pid))
+	if err != nil {
+		return processSnapshotResult{}
+	}
+
+	result := processSnapshotResult{}
+	if cwd, err := root.CwdWithContext(ctx); err == nil {
+		result.cwd = cwd
+	}
+
+	foreground := foregroundDescendant(ctx, root)
+	if foreground != nil {
+		result.foregroundCommand = processCommand(ctx, foreground)
+	}
+
+	return result
+}
+
+func foregroundDescendant(ctx context.Context, root *process.Process) *process.Process {
+	if root == nil {
+		return nil
+	}
+
+	children, err := root.ChildrenWithContext(ctx)
+	if err != nil || len(children) == 0 {
+		return nil
+	}
+	sort.Slice(children, func(i, j int) bool { return children[i].Pid < children[j].Pid })
+
+	var foreground *process.Process
+	for _, child := range children {
+		isForeground, err := child.ForegroundWithContext(ctx)
+		if err == nil && isForeground {
+			return child
+		}
+
+		if descendant := foregroundDescendant(ctx, child); descendant != nil {
+			foreground = descendant
+		}
+	}
+
+	return foreground
+}
+
+func processCommand(ctx context.Context, proc *process.Process) string {
+	if proc == nil {
+		return ""
+	}
+
+	args, err := proc.CmdlineSliceWithContext(ctx)
+	if err == nil && len(args) > 0 {
+		return formatCommand(args)
+	}
+
+	if line, err := proc.CmdlineWithContext(ctx); err == nil {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return truncateTerminalTitle(line)
+		}
+	}
+
+	name, err := proc.NameWithContext(ctx)
+	if err != nil {
+		return ""
+	}
+	return truncateTerminalTitle(strings.TrimSpace(name))
+}
+
+func formatCommand(args []string) string {
+	parts := make([]string, 0, len(args))
+	for index, arg := range args {
+		arg = strings.TrimSpace(arg)
+		if arg == "" {
+			continue
+		}
+		if index == 0 {
+			arg = filepath.Base(arg)
+		}
+		if strings.ContainsAny(arg, " \t\n\r") {
+			arg = quoteCommandArg(arg)
+		}
+		parts = append(parts, arg)
+	}
+	return truncateTerminalTitle(strings.Join(parts, " "))
+}
+
+func truncateTerminalTitle(title string) string {
+	title = strings.Join(strings.Fields(title), " ")
+	if len([]rune(title)) <= terminalTitleMaxLength {
+		return title
+	}
+
+	runes := []rune(title)
+	return string(runes[:terminalTitleMaxLength-1]) + "…"
+}
+
+func quoteCommandArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func (s *Session) WriteInput(payload []byte) error {

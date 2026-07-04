@@ -11,7 +11,7 @@ import {
   tabIndexFromShortcutKey,
 } from './model';
 import { defaultTerminalTheme, TerminalPane } from './terminal-pane';
-import type { LayoutNode, SplitDirection, TerminalReadyEvent, TerminalStatusResponse, TerminalTab, TerminalTheme, TerminalThemeColors } from './types';
+import type { LayoutNode, SplitDirection, TerminalReadyEvent, TerminalStatusEvent, TerminalStatusResponse, TerminalTab, TerminalTheme, TerminalThemeColors } from './types';
 
 interface PersistedState {
   tabs: TerminalTab[];
@@ -250,6 +250,7 @@ class CometApp {
       id: paneId,
       onFocusPane: (id) => this.setActivePane(id),
       onReady: (id, event) => this.updateTitleFromReady(id, event),
+      onStatus: (id, event) => this.updateTitleFromStatus(id, event),
       onExit: (id) => this.removePane(id),
       theme: this.currentTheme.colors,
     });
@@ -275,12 +276,23 @@ class CometApp {
   }
 
   private updateTitleFromReady(paneId: string, event: TerminalReadyEvent) {
+    this.updateAutoTitle(paneId, event);
+  }
+
+  private updateTitleFromStatus(paneId: string, event: TerminalStatusEvent) {
+    this.updateAutoTitle(paneId, event);
+  }
+
+  private updateAutoTitle(paneId: string, event: TerminalReadyEvent | TerminalStatusEvent) {
     const tab = this.tabs.find((candidate) => candidate.panes.includes(paneId));
     if (!tab || tab.customTitle || tab.panes[0] !== paneId) {
       return;
     }
-    tab.title = event.displayCwd || event.cwd || '~';
-    this.saveState();
+    const title = event.displayTitle || event.foregroundCommand || event.displayCwd || event.cwd || '~';
+    if (tab.title === title) {
+      return;
+    }
+    tab.title = title;
     this.renderTabs();
   }
 

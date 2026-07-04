@@ -82,6 +82,10 @@ describe('terminal socket message handling', () => {
     pane.onReady = () => {
       pane.onReadyCalls += 1;
     };
+    pane.onStatusCalls = 0;
+    pane.onStatus = () => {
+      pane.onStatusCalls += 1;
+    };
     pane.onExit = () => {
       pane.onExitCalls += 1;
     };
@@ -104,7 +108,17 @@ describe('terminal socket message handling', () => {
     expect(pane.replayPendingWrites).toBe(0);
     expect(pane.suppressInput).toBe(true);
     expect(pane.onReadyCalls).toBe(0);
+    expect(pane.onStatusCalls).toBe(0);
     expect(pane.fitCalls).toBe(0);
+  });
+
+  it('forwards status events from the active socket', () => {
+    const { pane } = createPane();
+    const socket = pane.socket as WebSocket;
+
+    pane.handleMessage(socket, { data: JSON.stringify({ type: 'status', displayTitle: 'vim foo' }) } as MessageEvent);
+
+    expect(pane.onStatusCalls).toBe(1);
   });
 
   it('ignores replay write callbacks after socket replacement', () => {

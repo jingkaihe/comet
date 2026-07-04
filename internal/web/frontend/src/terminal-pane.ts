@@ -1,6 +1,6 @@
 import { FitAddon, Ghostty, Terminal } from 'ghostty-web';
 import ghosttyWasmUrl from 'ghostty-web/ghostty-vt.wasm?url';
-import type { TerminalClientMessage, TerminalReadyEvent, TerminalServerEvent, TerminalThemeColors } from './types';
+import type { TerminalClientMessage, TerminalReadyEvent, TerminalServerEvent, TerminalStatusEvent, TerminalThemeColors } from './types';
 
 const FONT_SIZE = 13;
 const FONT_FAMILY = '"JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Ubuntu Mono", monospace';
@@ -118,7 +118,7 @@ const isTerminalServerEvent = (value: unknown): value is TerminalServerEvent => 
     return false;
   }
   const type = (value as { type?: unknown }).type;
-  return type === 'ready' || type === 'exit' || type === 'info' || type === 'error' || type === 'replay-complete';
+  return type === 'ready' || type === 'status' || type === 'exit' || type === 'info' || type === 'error' || type === 'replay-complete';
 };
 
 export class TerminalPane {
@@ -129,6 +129,7 @@ export class TerminalPane {
   private readonly status: HTMLElement;
   private readonly onFocusPane: (id: string) => void;
   private readonly onReady: (id: string, event: TerminalReadyEvent) => void;
+  private readonly onStatus: (id: string, event: TerminalStatusEvent) => void;
   private readonly onExit: (id: string, code: number) => void;
   private theme: TerminalThemeColors;
 
@@ -147,12 +148,14 @@ export class TerminalPane {
     id: string;
     onFocusPane: (id: string) => void;
     onReady: (id: string, event: TerminalReadyEvent) => void;
+    onStatus: (id: string, event: TerminalStatusEvent) => void;
     onExit: (id: string, code: number) => void;
     theme?: TerminalThemeColors;
   }) {
     this.id = options.id;
     this.onFocusPane = options.onFocusPane;
     this.onReady = options.onReady;
+    this.onStatus = options.onStatus;
     this.onExit = options.onExit;
     this.theme = options.theme ?? defaultTerminalTheme;
     this.element = document.createElement('section');
@@ -420,6 +423,10 @@ export class TerminalPane {
           this.status.textContent = 'Restoring…';
           this.onReady(this.id, payload);
           this.fitAndResize();
+          return;
+        }
+        if (payload.type === 'status') {
+          this.onStatus(this.id, payload);
           return;
         }
         if (payload.type === 'replay-complete') {
