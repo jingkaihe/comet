@@ -66,12 +66,13 @@ type Session struct {
 	cmd    *exec.Cmd
 	ptmx   *os.File
 
-	mu          sync.Mutex
-	ptyMu       sync.Mutex
-	attachments map[*Attachment]struct{}
-	buffer      []byte
-	exited      bool
-	exitCode    int
+	mu           sync.Mutex
+	ptyMu        sync.Mutex
+	attachments  map[*Attachment]struct{}
+	buffer       []byte
+	exited       bool
+	exitCode     int
+	lastKnownCWD string
 
 	done       chan struct{}
 	doneOnce   sync.Once
@@ -247,13 +248,14 @@ func newSession(ctx context.Context, id, cwd, shell, shellName string, rows, col
 	}
 
 	return &Session{
-		id:          id,
-		shellName:   shellName,
-		cancel:      cancel,
-		cmd:         cmd,
-		ptmx:        ptmx,
-		attachments: make(map[*Attachment]struct{}),
-		done:        make(chan struct{}),
+		id:           id,
+		shellName:    shellName,
+		cancel:       cancel,
+		cmd:          cmd,
+		ptmx:         ptmx,
+		attachments:  make(map[*Attachment]struct{}),
+		lastKnownCWD: cwd,
+		done:         make(chan struct{}),
 	}, nil
 }
 
@@ -288,10 +290,12 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 		ctx = context.Background()
 	}
 
-	cwd := ""
-	if s.cmd != nil {
+	s.mu.Lock()
+	cwd := s.lastKnownCWD
+	if strings.TrimSpace(cwd) == "" && s.cmd != nil {
 		cwd = s.cmd.Dir
 	}
+	s.mu.Unlock()
 	foregroundCommand := ""
 
 	if s.isAlive() && s.cmd != nil && s.cmd.Process != nil && s.cmd.Process.Pid > 0 {
@@ -299,8 +303,11 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 		snapshot := processSnapshot(probeCtx, s.cmd.Process.Pid)
 		cancel()
 
-		if strings.TrimSpace(snapshot.cwd) != "" {
-			cwd = snapshot.cwd
+		if snapshotCWD := strings.TrimSpace(snapshot.cwd); snapshotCWD != "" {
+			cwd = snapshotCWD
+			s.mu.Lock()
+			s.lastKnownCWD = snapshotCWD
+			s.mu.Unlock()
 		}
 		foregroundCommand = snapshot.foregroundCommand
 	}

@@ -248,6 +248,37 @@ func TestSessionProcessStatusFallsBackToCWD(t *testing.T) {
 	}
 }
 
+func TestSessionProcessStatusKeepsLastObservedCWDWhenSnapshotCWDUnavailable(t *testing.T) {
+	const fakePID = 99999999
+
+	calls := 0
+	oldProcessSnapshot := processSnapshot
+	processSnapshot = func(_ context.Context, pid int) processSnapshotResult {
+		if pid != fakePID {
+			t.Fatalf("processSnapshot pid = %d, want %d", pid, fakePID)
+		}
+		calls++
+		if calls == 1 {
+			return processSnapshotResult{cwd: "/tmp/comet"}
+		}
+		return processSnapshotResult{}
+	}
+	t.Cleanup(func() { processSnapshot = oldProcessSnapshot })
+
+	session := newFakeLiveSession(t, fakePID)
+	session.cmd.Dir = "/tmp"
+
+	firstStatus := session.ProcessStatus(context.Background())
+	if firstStatus.CWD != "/tmp/comet" {
+		t.Fatalf("first cwd = %q, want /tmp/comet", firstStatus.CWD)
+	}
+
+	secondStatus := session.ProcessStatus(context.Background())
+	if secondStatus.CWD != "/tmp/comet" || secondStatus.DisplayTitle != "/tmp/comet" {
+		t.Fatalf("second status = %#v, want cached cwd /tmp/comet", secondStatus)
+	}
+}
+
 func TestFormatCommandShortensExecutableAndQuotesArguments(t *testing.T) {
 	got := formatCommand([]string{"/usr/bin/vim", "foo bar", "plain"})
 	want := "vim 'foo bar' plain"
