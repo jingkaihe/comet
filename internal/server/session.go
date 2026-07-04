@@ -60,7 +60,6 @@ type SessionManager struct {
 
 type Session struct {
 	id        string
-	cwd       string
 	shellName string
 
 	ctx    context.Context
@@ -250,7 +249,6 @@ func newSession(ctx context.Context, id, cwd, shell, shellName string, rows, col
 
 	return &Session{
 		id:          id,
-		cwd:         cwd,
 		shellName:   shellName,
 		ctx:         sessionCtx,
 		cancel:      cancel,
@@ -292,7 +290,10 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 		ctx = context.Background()
 	}
 
-	cwd := s.knownCWD()
+	cwd := ""
+	if s.cmd != nil {
+		cwd = s.cmd.Dir
+	}
 	foregroundCommand := ""
 
 	if s.isAlive() && s.cmd != nil && s.cmd.Process != nil && s.cmd.Process.Pid > 0 {
@@ -302,7 +303,6 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 
 		if strings.TrimSpace(snapshot.cwd) != "" {
 			cwd = snapshot.cwd
-			s.setCWD(cwd)
 		}
 		foregroundCommand = snapshot.foregroundCommand
 	}
@@ -323,18 +323,6 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 		ForegroundCommand: foregroundCommand,
 		DisplayTitle:      displayTitle,
 	}
-}
-
-func (s *Session) setCWD(cwd string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cwd = cwd
-}
-
-func (s *Session) knownCWD() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cwd
 }
 
 func (s *Session) Attach() (*Attachment, []byte, error) {

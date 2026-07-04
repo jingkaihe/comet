@@ -213,7 +213,7 @@ func TestSessionProcessStatusUsesForegroundCommandAsTitle(t *testing.T) {
 	t.Cleanup(func() { processSnapshot = oldProcessSnapshot })
 
 	session := newFakeLiveSession(t, fakePID)
-	session.cwd = "/tmp"
+	session.cmd.Dir = "/tmp"
 
 	status := session.ProcessStatus(context.Background())
 	if status.CWD != "/tmp/comet" || status.DisplayCWD != "/tmp/comet" {
@@ -221,9 +221,6 @@ func TestSessionProcessStatusUsesForegroundCommandAsTitle(t *testing.T) {
 	}
 	if status.ForegroundCommand != "vim foo" || status.DisplayTitle != "vim foo" {
 		t.Fatalf("command status = %#v, want vim foo title", status)
-	}
-	if session.knownCWD() != "/tmp/comet" {
-		t.Fatalf("known cwd = %q, want live cwd cached", session.knownCWD())
 	}
 }
 
@@ -240,7 +237,7 @@ func TestSessionProcessStatusFallsBackToCWD(t *testing.T) {
 	t.Cleanup(func() { processSnapshot = oldProcessSnapshot })
 
 	session := newFakeLiveSession(t, fakePID)
-	session.cwd = "/tmp"
+	session.cmd.Dir = "/tmp"
 
 	status := session.ProcessStatus(context.Background())
 	if status.ForegroundCommand != "" {
