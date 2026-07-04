@@ -62,7 +62,6 @@ type Session struct {
 	id        string
 	shellName string
 
-	ctx    context.Context
 	cancel context.CancelFunc
 	cmd    *exec.Cmd
 	ptmx   *os.File
@@ -140,7 +139,7 @@ func (m *SessionManager) GetOrCreate(ctx context.Context, id, cwd string, rows, 
 		m.remove(id, session)
 	}
 	m.sessions[id] = session
-	session.start(ctx)
+	session.start()
 	return session, nil
 }
 
@@ -250,7 +249,6 @@ func newSession(ctx context.Context, id, cwd, shell, shellName string, rows, col
 	return &Session{
 		id:          id,
 		shellName:   shellName,
-		ctx:         sessionCtx,
 		cancel:      cancel,
 		cmd:         cmd,
 		ptmx:        ptmx,
@@ -259,9 +257,9 @@ func newSession(ctx context.Context, id, cwd, shell, shellName string, rows, col
 	}, nil
 }
 
-func (s *Session) start(ctx context.Context) {
+func (s *Session) start() {
 	go s.readPTY()
-	go s.wait(ctx)
+	go s.wait()
 }
 
 func (s *Session) ReadyMessage(ctx context.Context) terminalMessage {
@@ -540,7 +538,7 @@ func (s *Session) readPTY() {
 	}
 }
 
-func (s *Session) wait(context.Context) {
+func (s *Session) wait() {
 	waitErr := s.cmd.Wait()
 	code := 0
 	if waitErr != nil {
