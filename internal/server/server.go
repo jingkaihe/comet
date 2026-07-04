@@ -78,7 +78,7 @@ func New(config *Config) (*Server, error) {
 
 func (s *Server) routes() {
 	s.mux.Handle("/assets/", s.authMiddleware(http.FileServer(http.FS(s.staticFS))))
-	s.mux.Handle("/api/health", s.authMiddleware(http.HandlerFunc(s.handleHealth)))
+	s.mux.Handle("/api/healthz", s.authMiddleware(http.HandlerFunc(s.handleHealth)))
 	s.mux.Handle("/api/layout", s.authMiddleware(http.HandlerFunc(s.handleLayout)))
 	s.mux.Handle("/api/themes", s.authMiddleware(http.HandlerFunc(s.handleThemes)))
 	s.mux.Handle("/api/terminal/status", s.authMiddleware(http.HandlerFunc(s.handleTerminalStatus)))
@@ -185,7 +185,11 @@ func rootAssetContentType(name string) string {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	response := map[string]string{"status": "ok"}
+	if s.config.InstanceID != "" {
+		response["instanceId"] = s.config.InstanceID
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

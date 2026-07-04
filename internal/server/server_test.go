@@ -35,7 +35,7 @@ func TestAuthMiddlewareRequiresToken(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
@@ -53,7 +53,7 @@ func TestAuthMiddlewareAcceptsQueryTokenAndSetsCookie(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/health?token=secret", nil))
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/healthz?token=secret", nil))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -71,12 +71,53 @@ func TestAuthMiddlewareAcceptsBearerToken(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/healthz", nil)
 	request.Header.Set("Authorization", "Bearer secret")
 	handler.ServeHTTP(recorder, request)
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+}
+
+func TestHealthResponseIncludesInstanceID(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{config: &Config{InstanceID: "instance-1"}}
+	recorder := httptest.NewRecorder()
+	s.handleHealth(recorder, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if body["status"] != "ok" || body["instanceId"] != "instance-1" {
+		t.Fatalf("health body = %#v", body)
+	}
+}
+
+func TestServerRoutesHealthz(t *testing.T) {
+	t.Parallel()
+
+	s, err := New(&Config{Host: "localhost", Port: 6174})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer s.Close()
+
+	healthzRecorder := httptest.NewRecorder()
+	s.mux.ServeHTTP(healthzRecorder, httptest.NewRequest(http.MethodGet, "/api/healthz", nil))
+	if healthzRecorder.Code != http.StatusOK {
+		t.Fatalf("/api/healthz status = %d, want %d", healthzRecorder.Code, http.StatusOK)
+	}
+
+	healthRecorder := httptest.NewRecorder()
+	s.mux.ServeHTTP(healthRecorder, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if healthRecorder.Code != http.StatusNotFound {
+		t.Fatalf("/api/health status = %d, want %d", healthRecorder.Code, http.StatusNotFound)
 	}
 }
 

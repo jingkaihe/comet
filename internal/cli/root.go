@@ -17,6 +17,8 @@ func newRootCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(newServeCommand())
+	cmd.AddCommand(newStatusCommand())
+	cmd.AddCommand(newDownCommand())
 	cmd.AddCommand(newListThemesCommand())
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",

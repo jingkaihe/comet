@@ -9,10 +9,11 @@ import (
 )
 
 type Config struct {
-	Host      string
-	Port      int
-	AuthToken string
-	Theme     string
+	Host       string
+	Port       int
+	AuthToken  string
+	Theme      string
+	InstanceID string
 }
 
 func (c *Config) Validate() error {
@@ -29,13 +30,17 @@ func (c *Config) Validate() error {
 	return ValidateThemeName(c.Theme)
 }
 
-func NewAuthToken() (string, error) {
+func NewToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
 
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func NewAuthToken() (string, error) {
+	return NewToken()
 }
 
 func ValidateAuthToken(authToken string) error {
