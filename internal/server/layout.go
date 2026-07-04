@@ -11,8 +11,14 @@ type LayoutNode struct {
 	Type      string       `json:"type"`
 	ID        string       `json:"id,omitempty"`
 	Direction string       `json:"direction,omitempty"`
+	Sizes     []int        `json:"sizes,omitempty"`
 	Children  []LayoutNode `json:"children,omitempty"`
 }
+
+const (
+	splitWeightTotal = 100
+	minSplitWeight   = 10
+)
 
 type TerminalTabLayout struct {
 	ID           string     `json:"id"`
@@ -152,10 +158,14 @@ func normalizeLayoutNode(node LayoutNode, seenPanes map[string]struct{}) (Layout
 			return LayoutNode{}, false
 		}
 		children := make([]LayoutNode, 0, len(node.Children))
-		for _, child := range node.Children {
+		sizes := make([]int, 0, len(node.Children))
+		for index, child := range node.Children {
 			normalizedChild, ok := normalizeLayoutNode(child, seenPanes)
 			if ok {
 				children = append(children, normalizedChild)
+				if validSplitSizes(node.Sizes, len(node.Children)) {
+					sizes = append(sizes, node.Sizes[index])
+				}
 			}
 		}
 		if len(children) == 0 {
@@ -164,10 +174,111 @@ func normalizeLayoutNode(node LayoutNode, seenPanes map[string]struct{}) (Layout
 		if len(children) == 1 {
 			return children[0], true
 		}
-		return LayoutNode{Type: "split", Direction: node.Direction, Children: children}, true
+		if len(sizes) != len(children) {
+			sizes = equalSplitSizes(len(children))
+		} else if len(sizes) != len(node.Sizes) {
+			sizes = scaleSplitSizesToTotal(sizes)
+		}
+		return LayoutNode{Type: "split", Direction: node.Direction, Sizes: sizes, Children: children}, true
 	default:
 		return LayoutNode{}, false
 	}
+}
+
+func equalSplitSizes(count int) []int {
+	if count <= 0 {
+		return nil
+	}
+
+	base := splitWeightTotal / count
+	remainder := splitWeightTotal - base*count
+	sizes := make([]int, count)
+	for i := range sizes {
+		sizes[i] = base
+		if i < remainder {
+			sizes[i]++
+		}
+	}
+	return sizes
+}
+
+func validSplitSizes(sizes []int, count int) bool {
+	if len(sizes) != count || count == 0 {
+		return false
+	}
+	minimum := minSplitWeight
+	if count*minSplitWeight > splitWeightTotal {
+		minimum = 1
+		if count > splitWeightTotal {
+			minimum = 0
+		}
+	}
+	total := 0
+	for _, size := range sizes {
+		if size < minimum {
+			return false
+		}
+		total += size
+	}
+	return total == splitWeightTotal
+}
+
+func scaleSplitSizesToTotal(sizes []int) []int {
+	if len(sizes) == 0 {
+		return nil
+	}
+	total := 0
+	for _, size := range sizes {
+		if size <= 0 {
+			return equalSplitSizes(len(sizes))
+		}
+		total += size
+	}
+	if total <= 0 {
+		return equalSplitSizes(len(sizes))
+	}
+
+	scaled := make([]int, len(sizes))
+	remainders := make([]int, len(sizes))
+	scaledTotal := 0
+	for i, size := range sizes {
+		product := size * splitWeightTotal
+		scaled[i] = product / total
+		if scaled[i] == 0 {
+			scaled[i] = 1
+		}
+		remainders[i] = product % total
+		scaledTotal += scaled[i]
+	}
+
+	for scaledTotal < splitWeightTotal {
+		bestIndex := 0
+		for i := range remainders {
+			if remainders[i] > remainders[bestIndex] {
+				bestIndex = i
+			}
+		}
+		scaled[bestIndex]++
+		remainders[bestIndex] = -1
+		scaledTotal++
+	}
+
+	for scaledTotal > splitWeightTotal {
+		bestIndex := len(scaled) - 1
+		for i := len(scaled) - 1; i >= 0; i-- {
+			if scaled[i] > 1 {
+				bestIndex = i
+				break
+			}
+		}
+		if scaled[bestIndex] <= 1 {
+			return equalSplitSizes(len(sizes))
+		}
+		scaled[bestIndex]--
+		scaledTotal--
+	}
+
+	return scaled
 }
 
 func collectLayoutPaneIDs(node LayoutNode) []string {
@@ -205,6 +316,9 @@ func cloneLayoutState(state LayoutState) LayoutState {
 
 func cloneLayoutNode(node LayoutNode) LayoutNode {
 	clone := node
+	if node.Sizes != nil {
+		clone.Sizes = append([]int(nil), node.Sizes...)
+	}
 	if node.Children != nil {
 		clone.Children = make([]LayoutNode, len(node.Children))
 		for i, child := range node.Children {

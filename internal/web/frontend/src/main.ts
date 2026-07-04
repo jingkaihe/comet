@@ -2,12 +2,15 @@ import './styles.css';
 import {
   collectPaneIds,
   createTab,
+  equalizeLayout,
   findAdjacentPaneId,
   newId,
   paneDirectionFromShortcutKey,
   removePaneFromLayout,
+  resizePaneInLayout,
   seedCountersFromTabs,
   splitLayout,
+  splitSizes,
   tabIndexFromShortcutKey,
 } from './model';
 import { defaultTerminalTheme, TerminalPane } from './terminal-pane';
@@ -69,13 +72,17 @@ const isLayoutNode = (value: unknown): value is LayoutNode => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
-  const node = value as { type?: unknown; id?: unknown; direction?: unknown; children?: unknown };
+  const node = value as { type?: unknown; id?: unknown; direction?: unknown; sizes?: unknown; children?: unknown };
   if (node.type === 'pane') {
     return typeof node.id === 'string' && node.id.length > 0;
   }
+  const hasValidSizes = node.sizes === undefined || (
+    Array.isArray(node.sizes) && node.sizes.every((size) => Number.isInteger(size) && size >= 0)
+  );
   return (
     node.type === 'split' &&
     (node.direction === 'vertical' || node.direction === 'horizontal') &&
+    hasValidSizes &&
     Array.isArray(node.children) &&
     node.children.length > 0 &&
     node.children.every(isLayoutNode)
@@ -150,8 +157,8 @@ class CometApp {
     window.addEventListener('resize', () => this.fitActivePanes());
 
     this.hint.textContent = navigator.platform.toLowerCase().includes('mac')
-      ? '⌘T new tab · ⌘W close tab · ⌘D vertical split · ⌘⇧D horizontal split · ⌘1-9 switch tabs · ⌘⌥←/→/↑/↓ switch panes'
-      : 'Ctrl⇧T new tab · Ctrl⇧W close tab · Ctrl⇧D vertical split · Ctrl⌥D horizontal split · Alt1-9 switch tabs · Ctrl⌥←/→/↑/↓ switch panes';
+      ? '⌘T new tab · ⌘W close tab · ⌘D vertical split · ⌘⇧D horizontal split · ⌘1-9 switch tabs · ⌘⌥←/→/↑/↓ switch panes · ⌘⌃←/→/↑/↓ resize panes'
+      : 'Ctrl⇧T new tab · Ctrl⇧W close tab · Ctrl⇧D vertical split · Ctrl⌥D horizontal split · Alt1-9 switch tabs · Ctrl⌥←/→/↑/↓ switch panes · Ctrl⌥⇧←/→/↑/↓ resize panes';
   }
 
   async start() {
@@ -235,6 +242,39 @@ class CometApp {
 
     this.setActivePane(paneId);
     this.panes.get(paneId)?.focus();
+  }
+
+  private resizeActivePane(direction: ReturnType<typeof paneDirectionFromShortcutKey>) {
+    if (!direction) {
+      return;
+    }
+
+    const tab = this.activeTab;
+    if (!tab) {
+      return;
+    }
+
+    const nextLayout = resizePaneInLayout(tab.layout, tab.activePaneId, direction);
+    if (nextLayout === tab.layout) {
+      return;
+    }
+
+    tab.layout = nextLayout;
+    this.saveState();
+    this.render();
+    this.fitActivePanes();
+  }
+
+  private equalizeActiveTabSplits() {
+    const tab = this.activeTab;
+    if (!tab || tab.layout.type === 'pane') {
+      return;
+    }
+
+    tab.layout = equalizeLayout(tab.layout);
+    this.saveState();
+    this.render();
+    this.fitActivePanes();
   }
 
   private get activeTab() {
@@ -538,7 +578,12 @@ class CometApp {
 
     const element = document.createElement('div');
     element.className = `split split-${node.direction}`;
-    element.replaceChildren(...(await Promise.all(node.children.map((child) => this.renderLayoutNode(child)))));
+    const children = await Promise.all(node.children.map((child) => this.renderLayoutNode(child)));
+    const sizes = splitSizes(node);
+    children.forEach((child, index) => {
+      child.style.flex = `${sizes[index]} 1 0`;
+    });
+    element.replaceChildren(...children);
     return element;
   }
 
@@ -566,6 +611,20 @@ class CometApp {
 
     const paneDirection = paneDirectionFromShortcutKey(key);
     if (paneDirection !== null) {
+      if (isMac && event.metaKey && event.ctrlKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.resizeActivePane(paneDirection);
+        return;
+      }
+
+      if (!isMac && event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.resizeActivePane(paneDirection);
+        return;
+      }
+
       if (isMac && event.metaKey && event.altKey && !event.ctrlKey && !event.shiftKey) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -577,6 +636,22 @@ class CometApp {
         event.preventDefault();
         event.stopImmediatePropagation();
         this.activateAdjacentPane(paneDirection);
+        return;
+      }
+    }
+
+    if (key === '=' || key === '+') {
+      if (isMac && event.metaKey && event.ctrlKey && !event.altKey && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.equalizeActiveTabSplits();
+        return;
+      }
+
+      if (!isMac && event.ctrlKey && event.altKey && event.shiftKey && !event.metaKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.equalizeActiveTabSplits();
         return;
       }
     }

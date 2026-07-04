@@ -8,6 +8,7 @@ export interface PaneNode {
 export interface SplitNode {
   type: 'split';
   direction: SplitDirection;
+  sizes?: number[];
   children: LayoutNode[];
 }
 

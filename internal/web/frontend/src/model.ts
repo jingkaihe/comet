@@ -1,9 +1,15 @@
 import type { LayoutNode, SplitDirection, TerminalTab } from './types';
 
+export const SPLIT_WEIGHT_TOTAL = 100;
+export const MIN_SPLIT_WEIGHT = 10;
+export const RESIZE_STEP_WEIGHT = 2;
+
 let nextId = 1;
 let nextTabNumber = 1;
 
 export type PaneNavigationDirection = 'left' | 'right' | 'up' | 'down';
+
+export type PaneResizeDirection = PaneNavigationDirection;
 
 interface PaneRect {
   id: string;
@@ -22,6 +28,75 @@ interface PaneCandidate {
 }
 
 const epsilon = 1e-9;
+
+const minSplitWeightForCount = (count: number) => (
+  count * MIN_SPLIT_WEIGHT <= SPLIT_WEIGHT_TOTAL ? MIN_SPLIT_WEIGHT : count <= SPLIT_WEIGHT_TOTAL ? 1 : 0
+);
+
+const hasValidSizes = (sizes: number[] | undefined, count: number): sizes is number[] => {
+  const minimum = minSplitWeightForCount(count);
+  return (
+    Array.isArray(sizes) &&
+    sizes.length === count &&
+    sizes.every((size) => Number.isInteger(size) && size >= minimum) &&
+    sizes.reduce((sum, size) => sum + size, 0) === SPLIT_WEIGHT_TOTAL
+  );
+};
+
+export const equalSplitSizes = (count: number): number[] => {
+  if (count <= 0) {
+    return [];
+  }
+
+  const base = Math.floor(SPLIT_WEIGHT_TOTAL / count);
+  const remainder = SPLIT_WEIGHT_TOTAL - base * count;
+  return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
+};
+
+const scaleSplitSizesToTotal = (sizes: number[]): number[] => {
+  if (sizes.length === 0) {
+    return [];
+  }
+  if (sizes.length > SPLIT_WEIGHT_TOTAL) {
+    return equalSplitSizes(sizes.length);
+  }
+
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  if (!Number.isFinite(total) || total <= 0) {
+    return equalSplitSizes(sizes.length);
+  }
+
+  const exactSizes = sizes.map((size) => (size * SPLIT_WEIGHT_TOTAL) / total);
+  const scaledSizes = exactSizes.map((size) => Math.max(1, Math.floor(size)));
+  let remainder = SPLIT_WEIGHT_TOTAL - scaledSizes.reduce((sum, size) => sum + size, 0);
+  const indexesByFraction = exactSizes
+    .map((size, index) => ({ index, fraction: size - Math.floor(size) }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index);
+
+  for (let index = 0; remainder > 0; index += 1, remainder -= 1) {
+    scaledSizes[indexesByFraction[index % indexesByFraction.length].index] += 1;
+  }
+
+  for (let index = scaledSizes.length - 1; remainder < 0; index = (index - 1 + scaledSizes.length) % scaledSizes.length) {
+    if (scaledSizes[index] <= 1) {
+      continue;
+    }
+    scaledSizes[index] -= 1;
+    remainder += 1;
+  }
+
+  return scaledSizes;
+};
+
+export const splitSizes = (node: LayoutNode): number[] => {
+  if (node.type === 'pane') {
+    return [];
+  }
+
+  return hasValidSizes(node.sizes, node.children.length)
+    ? node.sizes
+    : equalSplitSizes(node.children.length);
+};
 
 export const newId = (prefix: string) => `${prefix}-${nextId++}`;
 
@@ -88,17 +163,28 @@ const appendPaneRects = (
     return;
   }
 
+  const sizes = splitSizes(node);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+
   if (node.direction === 'vertical') {
-    const childWidth = (right - left) / node.children.length;
+    let childLeft = left;
     node.children.forEach((child, index) => {
-      appendPaneRects(child, left + childWidth * index, top, left + childWidth * (index + 1), bottom, rects);
+      const childRight = index === node.children.length - 1
+        ? right
+        : childLeft + ((right - left) * sizes[index]) / total;
+      appendPaneRects(child, childLeft, top, childRight, bottom, rects);
+      childLeft = childRight;
     });
     return;
   }
 
-  const childHeight = (bottom - top) / node.children.length;
+  let childTop = top;
   node.children.forEach((child, index) => {
-    appendPaneRects(child, left, top + childHeight * index, right, top + childHeight * (index + 1), rects);
+    const childBottom = index === node.children.length - 1
+      ? bottom
+      : childTop + ((bottom - top) * sizes[index]) / total;
+    appendPaneRects(child, left, childTop, right, childBottom, rects);
+    childTop = childBottom;
   });
 };
 
@@ -194,6 +280,7 @@ export const splitLayout = (
     return {
       type: 'split',
       direction,
+      sizes: equalSplitSizes(2),
       children: [node, { type: 'pane', id: newPaneId }],
     };
   }
@@ -209,9 +296,17 @@ export const removePaneFromLayout = (node: LayoutNode, paneId: string): LayoutNo
     return node.id === paneId ? null : node;
   }
 
-  const children = node.children
-    .map((child) => removePaneFromLayout(child, paneId))
-    .filter((child): child is LayoutNode => child !== null);
+  const sizes = splitSizes(node);
+  const children: LayoutNode[] = [];
+  const nextSizes: number[] = [];
+  node.children.forEach((child, index) => {
+    const nextChild = removePaneFromLayout(child, paneId);
+    if (nextChild === null) {
+      return;
+    }
+    children.push(nextChild);
+    nextSizes.push(sizes[index]);
+  });
 
   if (children.length === 0) {
     return null;
@@ -220,5 +315,103 @@ export const removePaneFromLayout = (node: LayoutNode, paneId: string): LayoutNo
     return children[0];
   }
 
-  return { ...node, children };
+  return { ...node, sizes: scaleSplitSizesToTotal(nextSizes), children };
+};
+
+const containsPaneId = (node: LayoutNode, paneId: string): boolean => {
+  if (node.type === 'pane') {
+    return node.id === paneId;
+  }
+
+  return node.children.some((child) => containsPaneId(child, paneId));
+};
+
+const resizeAxisForDirection = (direction: PaneResizeDirection): SplitDirection => (
+  direction === 'left' || direction === 'right' ? 'vertical' : 'horizontal'
+);
+
+const leadingDirectionForSplit = (direction: SplitDirection): PaneResizeDirection => (
+  direction === 'vertical' ? 'left' : 'up'
+);
+
+const resizeSplitSizes = (sizes: number[], activeIndex: number, direction: PaneResizeDirection): number[] | null => {
+  const leadingDirection = leadingDirectionForSplit(resizeAxisForDirection(direction));
+  const towardLeadingEdge = direction === leadingDirection;
+  let siblingIndex = towardLeadingEdge ? activeIndex - 1 : activeIndex + 1;
+  let growsActive = true;
+  if (siblingIndex < 0 || siblingIndex >= sizes.length) {
+    siblingIndex = towardLeadingEdge ? activeIndex + 1 : activeIndex - 1;
+    growsActive = false;
+  }
+  if (siblingIndex < 0 || siblingIndex >= sizes.length) {
+    return null;
+  }
+
+  const nextSizes = [...sizes];
+  const activeSize = nextSizes[activeIndex];
+  const siblingSize = nextSizes[siblingIndex];
+  const available = growsActive ? siblingSize - MIN_SPLIT_WEIGHT : activeSize - MIN_SPLIT_WEIGHT;
+  const delta = Math.min(RESIZE_STEP_WEIGHT, Math.max(0, available));
+  if (delta <= 0) {
+    return null;
+  }
+
+  if (growsActive) {
+    nextSizes[activeIndex] += delta;
+    nextSizes[siblingIndex] -= delta;
+  } else {
+    nextSizes[activeIndex] -= delta;
+    nextSizes[siblingIndex] += delta;
+  }
+
+  return nextSizes;
+};
+
+const resizePaneInLayoutNode = (node: LayoutNode, activePaneId: string, direction: PaneResizeDirection): { node: LayoutNode; changed: boolean; handled: boolean } => {
+  if (node.type === 'pane') {
+    return { node, changed: false, handled: false };
+  }
+
+  const activeChildIndex = node.children.findIndex((child) => containsPaneId(child, activePaneId));
+  if (activeChildIndex === -1) {
+    return { node, changed: false, handled: false };
+  }
+
+  const resizedChild = resizePaneInLayoutNode(node.children[activeChildIndex], activePaneId, direction);
+  if (resizedChild.handled) {
+    if (!resizedChild.changed) {
+      return { node, changed: false, handled: true };
+    }
+    const children = [...node.children];
+    children[activeChildIndex] = resizedChild.node;
+    return { node: { ...node, children }, changed: true, handled: true };
+  }
+
+  const matchingAxis = resizeAxisForDirection(direction) === node.direction;
+  if (matchingAxis) {
+    const nextSizes = resizeSplitSizes(splitSizes(node), activeChildIndex, direction);
+    if (nextSizes !== null) {
+      return { node: { ...node, sizes: nextSizes }, changed: true, handled: true };
+    }
+    return { node, changed: false, handled: true };
+  }
+
+  return { node, changed: false, handled: false };
+};
+
+export const resizePaneInLayout = (node: LayoutNode, activePaneId: string, direction: PaneResizeDirection): LayoutNode => {
+  const resized = resizePaneInLayoutNode(node, activePaneId, direction);
+  return resized.node;
+};
+
+export const equalizeLayout = (node: LayoutNode): LayoutNode => {
+  if (node.type === 'pane') {
+    return node;
+  }
+
+  return {
+    ...node,
+    sizes: equalSplitSizes(node.children.length),
+    children: node.children.map(equalizeLayout),
+  };
 };

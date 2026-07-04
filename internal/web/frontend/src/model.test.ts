@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectPaneIds,
+  equalizeLayout,
   findAdjacentPaneId,
   paneDirectionFromShortcutKey,
   removePaneFromLayout,
+  resizePaneInLayout,
   splitLayout,
+  splitSizes,
   tabIndexFromShortcutKey,
 } from './model';
 import type { LayoutNode } from './types';
@@ -16,6 +19,7 @@ describe('splitLayout', () => {
     expect(splitLayout(layout, 'pane-1', 'vertical', 'pane-2')).toEqual({
       type: 'split',
       direction: 'vertical',
+      sizes: [50, 50],
       children: [
         { type: 'pane', id: 'pane-1' },
         { type: 'pane', id: 'pane-2' },
@@ -41,6 +45,7 @@ describe('splitLayout', () => {
         {
           type: 'split',
           direction: 'vertical',
+          sizes: [50, 50],
           children: [
             { type: 'pane', id: 'pane-2' },
             { type: 'pane', id: 'pane-3' },
@@ -85,6 +90,7 @@ describe('removePaneFromLayout', () => {
     expect(removePaneFromLayout(layout, 'pane-3')).toEqual({
       type: 'split',
       direction: 'horizontal',
+      sizes: [50, 50],
       children: [
         { type: 'pane', id: 'pane-1' },
         { type: 'pane', id: 'pane-2' },
@@ -94,6 +100,161 @@ describe('removePaneFromLayout', () => {
 
   it('returns null when the last pane is removed', () => {
     expect(removePaneFromLayout({ type: 'pane', id: 'pane-1' }, 'pane-1')).toBeNull();
+  });
+});
+
+describe('splitSizes', () => {
+  it('uses persisted integer percentages when valid', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [60, 40],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        { type: 'pane', id: 'pane-2' },
+      ],
+    };
+
+    expect(splitSizes(layout)).toEqual([60, 40]);
+  });
+
+  it('falls back to equal sizes when persisted sizes are invalid', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [99],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        { type: 'pane', id: 'pane-2' },
+      ],
+    };
+
+    expect(splitSizes(layout)).toEqual([50, 50]);
+  });
+});
+
+describe('resizePaneInLayout', () => {
+  it('resizes a two-pane split by two integer percentage points', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [50, 50],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        { type: 'pane', id: 'pane-2' },
+      ],
+    };
+
+    expect(resizePaneInLayout(layout, 'pane-1', 'right')).toEqual({
+      ...layout,
+      sizes: [52, 48],
+    });
+  });
+
+  it('shrinks an edge pane when resizing away from the split boundary', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [50, 50],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        { type: 'pane', id: 'pane-2' },
+      ],
+    };
+
+    expect(resizePaneInLayout(layout, 'pane-1', 'left')).toEqual({
+      ...layout,
+      sizes: [48, 52],
+    });
+  });
+
+  it('clamps panes to a ten percent minimum', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [90, 10],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        { type: 'pane', id: 'pane-2' },
+      ],
+    };
+
+    expect(resizePaneInLayout(layout, 'pane-1', 'right')).toBe(layout);
+  });
+
+  it('resizes the nearest matching split for nested layouts', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [50, 50],
+      children: [
+        {
+          type: 'split',
+          direction: 'vertical',
+          sizes: [50, 50],
+          children: [
+            { type: 'pane', id: 'pane-1' },
+            { type: 'pane', id: 'pane-2' },
+          ],
+        },
+        { type: 'pane', id: 'pane-3' },
+      ],
+    };
+
+    expect(resizePaneInLayout(layout, 'pane-1', 'right')).toEqual({
+      ...layout,
+      children: [
+        {
+          type: 'split',
+          direction: 'vertical',
+          sizes: [52, 48],
+          children: [
+            { type: 'pane', id: 'pane-1' },
+            { type: 'pane', id: 'pane-2' },
+          ],
+        },
+        { type: 'pane', id: 'pane-3' },
+      ],
+    });
+  });
+});
+
+describe('equalizeLayout', () => {
+  it('resets every split to equal percentage weights', () => {
+    const layout: LayoutNode = {
+      type: 'split',
+      direction: 'vertical',
+      sizes: [70, 30],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          sizes: [20, 80],
+          children: [
+            { type: 'pane', id: 'pane-2' },
+            { type: 'pane', id: 'pane-3' },
+          ],
+        },
+      ],
+    };
+
+    expect(equalizeLayout(layout)).toEqual({
+      ...layout,
+      sizes: [50, 50],
+      children: [
+        { type: 'pane', id: 'pane-1' },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          sizes: [50, 50],
+          children: [
+            { type: 'pane', id: 'pane-2' },
+            { type: 'pane', id: 'pane-3' },
+          ],
+        },
+      ],
+    });
   });
 });
 
