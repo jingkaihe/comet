@@ -405,6 +405,7 @@ class CometApp {
   }
 
   private renderTabs() {
+    this.root.classList.toggle('has-single-tab', this.tabs.length === 1);
     this.tabStrip.replaceChildren();
     this.tabs.forEach((tab, index) => {
       const tabElement = document.createElement('div');

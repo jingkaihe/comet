@@ -61,6 +61,14 @@ button {
   box-shadow: inset 0 1px 0 rgba(255, 250, 241, 0.04);
 }
 
+.comet-shell.has-single-tab {
+  grid-template-rows: minmax(0, 1fr) 24px;
+}
+
+.comet-shell.has-single-tab .topbar {
+  display: none;
+}
+
 .topbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 32px;
