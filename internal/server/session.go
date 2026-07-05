@@ -73,6 +73,10 @@ type Session struct {
 	exited       bool
 	exitCode     int
 	lastKnownCWD string
+	oscTitle     string
+
+	// titleParser is only touched by the readPTY goroutine.
+	titleParser oscTitleParser
 
 	done       chan struct{}
 	doneOnce   sync.Once
@@ -85,6 +89,7 @@ type Attachment struct {
 	outputCh chan []byte
 	exitCh   chan int
 	errCh    chan error
+	titleCh  chan struct{}
 }
 
 func NewSessionManager(ctx context.Context) *SessionManager {
@@ -295,6 +300,7 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 	if strings.TrimSpace(cwd) == "" && s.cmd != nil {
 		cwd = s.cmd.Dir
 	}
+	oscTitle := s.oscTitle
 	s.mu.Unlock()
 	foregroundCommand := ""
 
@@ -317,10 +323,7 @@ func (s *Session) ProcessStatus(ctx context.Context) processStatus {
 		cwd = "~"
 	}
 	displayCWD := displayCWD(cwd)
-	displayTitle := displayCWD
-	if foregroundCommand != "" {
-		displayTitle = foregroundCommand
-	}
+	displayTitle := composeDisplayTitle(oscTitle, foregroundCommand, displayCWD)
 
 	return processStatus{
 		CWD:               cwd,
@@ -343,6 +346,7 @@ func (s *Session) Attach() (*Attachment, []byte, error) {
 		outputCh: make(chan []byte, terminalAttachmentBufferLength),
 		exitCh:   make(chan int, 1),
 		errCh:    make(chan error, 1),
+		titleCh:  make(chan struct{}, 1),
 	}
 	s.attachments[attachment] = struct{}{}
 	replay := append([]byte(nil), s.buffer...)
@@ -534,6 +538,9 @@ func (s *Session) readPTY() {
 		n, readErr := s.ptmx.Read(buf)
 		if n > 0 {
 			chunk := append([]byte(nil), buf[:n]...)
+			if title, ok := s.titleParser.feed(chunk); ok {
+				s.setOSCTitle(title)
+			}
 			s.appendOutput(chunk)
 		}
 		if readErr != nil {
@@ -556,6 +563,31 @@ func (s *Session) wait() {
 	}
 
 	s.finish(code)
+}
+
+// setOSCTitle latches the OSC 0/2 title and wakes attached clients so
+// title changes push without waiting for the next status probe tick.
+func (s *Session) setOSCTitle(title string) {
+	title = truncateTerminalTitle(title)
+
+	s.mu.Lock()
+	if s.exited || s.oscTitle == title {
+		s.mu.Unlock()
+		return
+	}
+	s.oscTitle = title
+	attachments := s.attachmentsSnapshotLocked()
+	s.mu.Unlock()
+
+	for _, attachment := range attachments {
+		attachment.notifyTitle()
+	}
+}
+
+func (s *Session) OSCTitle() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.oscTitle
 }
 
 func (s *Session) appendOutput(chunk []byte) {
@@ -642,6 +674,14 @@ func (a *Attachment) sendExit(code int) {
 	case a.exitCh <- code:
 	default:
 		a.notify(errSessionClosed)
+	}
+}
+
+// notifyTitle coalesces; the reader picks up the latest title on drain.
+func (a *Attachment) notifyTitle() {
+	select {
+	case a.titleCh <- struct{}{}:
+	default:
 	}
 }
 

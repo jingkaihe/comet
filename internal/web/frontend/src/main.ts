@@ -333,7 +333,32 @@ class CometApp {
       return;
     }
     tab.title = title;
-    this.renderTabs();
+    this.refreshTabTitle(tab);
+  }
+
+  private refreshTabTitle(tab: TerminalTab) {
+    const tabElement = this.tabStrip.querySelector<HTMLElement>(`[data-tab-id="${tab.id}"]`);
+    if (!tabElement) {
+      this.renderTabs();
+      return;
+    }
+    tabElement.title = tab.title;
+    const label = tabElement.querySelector<HTMLElement>('.tab-title');
+    if (label) {
+      label.textContent = tab.title;
+    }
+    const close = tabElement.querySelector<HTMLButtonElement>('.tab-close');
+    if (close) {
+      close.ariaLabel = `Close ${tab.title}`;
+    }
+    if (tab.id === this.activeTabId) {
+      this.syncDocumentTitle();
+    }
+  }
+
+  private syncDocumentTitle() {
+    const title = this.activeTab?.title.trim();
+    document.title = title ? `${title} - Comet` : 'Comet';
   }
 
   private removePane(paneId: string) {
@@ -460,6 +485,7 @@ class CometApp {
     this.tabs.forEach((tab, index) => {
       const tabElement = document.createElement('div');
       tabElement.className = `tab ${tab.id === this.activeTabId ? 'is-active' : ''}`;
+      tabElement.dataset.tabId = tab.id;
       tabElement.title = tab.title;
 
       const button = document.createElement('button');
@@ -493,6 +519,7 @@ class CometApp {
       button.addEventListener('dblclick', () => this.renameTab(tab.id));
       this.tabStrip.append(tabElement);
     });
+    this.syncDocumentTitle();
   }
 
   private get currentTheme() {

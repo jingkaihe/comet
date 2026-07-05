@@ -259,19 +259,24 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 
 		lastStatus := processStatus{}
 		for {
+			var status processStatus
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				status := session.ProcessStatus(ctx)
-				if status == lastStatus {
-					continue
-				}
-				lastStatus = status
-				if err := writer.writeJSON(terminalStatusMessage(status)); err != nil {
-					attachment.notify(err)
-					return
-				}
+				status = session.ProcessStatus(ctx)
+			case <-attachment.titleCh:
+				// push OSC titles immediately without re-probing the process tree
+				status = lastStatus
+				status.DisplayTitle = composeDisplayTitle(session.OSCTitle(), status.ForegroundCommand, status.DisplayCWD)
+			}
+			if status == lastStatus {
+				continue
+			}
+			lastStatus = status
+			if err := writer.writeJSON(terminalStatusMessage(status)); err != nil {
+				attachment.notify(err)
+				return
 			}
 		}
 	}()

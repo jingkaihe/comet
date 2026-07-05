@@ -347,6 +347,61 @@ func TestTerminalWebSocketUpgradesThroughLoggingMiddleware(t *testing.T) {
 	}
 }
 
+func TestTerminalWebSocketPushesOSCTitleStatus(t *testing.T) {
+	if testing.Short() {
+		t.Skip("spawns a shell-backed pty")
+	}
+
+	t.Setenv("SHELL", "/bin/sh")
+
+	server, err := New(&Config{Host: "localhost", Port: 6174})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer server.Close()
+
+	testServer := httptest.NewServer(server.loggingMiddleware(server.mux))
+	defer testServer.Close()
+
+	wsURL := "ws" + testServer.URL[len("http"):] + "/api/terminal/ws?id=title-pane&rows=5&cols=80"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+
+	// octal escapes only become ESC/BEL once printf runs, so PTY echo can't pass the test
+	input := terminalMessage{Type: "input", Data: "printf '\\033]2;SPINNER TITLE\\007'\n"}
+	payload, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+		t.Fatalf("WriteMessage() error = %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	if err := conn.SetReadDeadline(deadline); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	for {
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("ReadMessage() error = %v, want status with OSC title", err)
+		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		var message terminalMessage
+		if err := json.Unmarshal(payload, &message); err != nil {
+			t.Fatalf("Unmarshal() error = %v payload=%q", err, string(payload))
+		}
+		if message.Type == "status" && message.DisplayTitle == "SPINNER TITLE" {
+			return
+		}
+	}
+}
+
 func httptestRequestWithOrigin(origin string, host string) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, "/api/terminal/ws", nil)
 	request.Header.Set("Origin", origin)
