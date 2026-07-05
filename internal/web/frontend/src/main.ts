@@ -358,7 +358,7 @@ class CometApp {
 
   private syncDocumentTitle() {
     const title = this.activeTab?.title.trim();
-    document.title = title ? `${title} - Comet` : 'Comet';
+    document.title = title || 'Comet';
   }
 
   private removePane(paneId: string) {
