@@ -289,7 +289,7 @@ func (s *Server) handleTerminalWebSocket(w http.ResponseWriter, r *http.Request)
 			_ = writer.writeJSON(terminalMessage{Type: "exit", Code: code})
 			return
 		case asyncErr := <-attachment.errCh:
-			if asyncErr != nil {
+			if asyncErr != nil && !errors.Is(asyncErr, errClientSlow) {
 				return
 			}
 		case socketRead := <-readCh:

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "ghostty-web": "^0.4.0"
+    "ghostty-web": "0.4.0-next.20.g1858a59"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^2.1.0",

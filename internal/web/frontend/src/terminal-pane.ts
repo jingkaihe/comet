@@ -121,6 +121,23 @@ const isTerminalServerEvent = (value: unknown): value is TerminalServerEvent => 
   return type === 'ready' || type === 'status' || type === 'exit' || type === 'info' || type === 'error' || type === 'replay-complete';
 };
 
+const drainTerminalResponses = (terminal: Terminal, onResponse: (data: string) => void) => {
+  const wasmTerm = terminal.wasmTerm;
+  if (!wasmTerm || typeof wasmTerm.readResponse !== 'function') {
+    return;
+  }
+
+  while (true) {
+    const response = wasmTerm.readResponse();
+    if (response === null) {
+      return;
+    }
+    if (response !== '') {
+      onResponse(response);
+    }
+  }
+};
+
 export class TerminalPane {
   readonly id: string;
   readonly element: HTMLElement;
@@ -217,9 +234,7 @@ export class TerminalPane {
     this.connectSocket();
 
     this.dataDisposable = terminal.onData((data) => {
-      if (!this.suppressInput) {
-        this.sendMessage({ type: 'input', data });
-      }
+      this.sendTerminalInput(data);
     });
     this.resizeDisposable = terminal.onResize(({ rows, cols }) => {
       this.sendMessage({ type: 'resize', rows, cols });
@@ -366,6 +381,18 @@ export class TerminalPane {
     this.socket.send(JSON.stringify(message));
   }
 
+  private sendTerminalInput(data: string) {
+    if (this.suppressInput) {
+      return;
+    }
+    this.sendMessage({ type: 'input', data });
+  }
+
+  private writeTerminalOutput(terminal: Terminal, data: Uint8Array, callback?: () => void) {
+    terminal.write(data, callback);
+    drainTerminalResponses(terminal, (response) => this.sendTerminalInput(response));
+  }
+
   private handleWheel(event: WheelEvent) {
     if (
       this.suppressInput ||
@@ -395,7 +422,7 @@ export class TerminalPane {
 
     event.preventDefault();
     event.stopPropagation();
-    this.sendMessage({ type: 'input', data: sequence });
+    this.sendTerminalInput(sequence);
     return true;
   }
 
@@ -451,7 +478,7 @@ export class TerminalPane {
       const data = new Uint8Array(event.data);
       if (!this.replayCompleteReceived) {
         this.replayPendingWrites += 1;
-        terminal.write(data, () => {
+        this.writeTerminalOutput(terminal, data, () => {
           if (this.socket !== socket) {
             return;
           }
@@ -460,7 +487,7 @@ export class TerminalPane {
         });
         return;
       }
-      terminal.write(data);
+      this.writeTerminalOutput(terminal, data);
     }
   }
 }
