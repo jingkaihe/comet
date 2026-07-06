@@ -787,10 +787,20 @@ func terminalEnv(shell string) []string {
 	profile := terminalProfile()
 	baseEnv := os.Environ()
 	env := make([]string, 0, len(baseEnv)+5)
+	var inheritedTerminfo string
+	var inheritedTerminfoDirs string
 	for _, entry := range baseEnv {
-		key, _, ok := strings.Cut(entry, "=")
-		if ok && shouldDropTerminalEnv(key) {
-			continue
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			switch key {
+			case "TERMINFO":
+				inheritedTerminfo = value
+			case "TERMINFO_DIRS":
+				inheritedTerminfoDirs = value
+			}
+			if shouldDropTerminalEnv(key) {
+				continue
+			}
 		}
 		env = append(env, entry)
 	}
@@ -801,11 +811,40 @@ func terminalEnv(shell string) []string {
 		"COLORTERM=truecolor",
 		"SHELL="+shell,
 	)
-	if profile.terminfoDir != "" {
-		env = append(env, "TERMINFO_DIRS="+profile.terminfoDir+string(os.PathListSeparator))
+	if terminfoDirs := terminalTerminfoDirs(profile.terminfoDir, inheritedTerminfo, inheritedTerminfoDirs); terminfoDirs != "" {
+		env = append(env, "TERMINFO_DIRS="+terminfoDirs)
 	}
 
 	return env
+}
+
+func terminalTerminfoDirs(profileDir string, inheritedTerminfo string, inheritedTerminfoDirs string) string {
+	dirs := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	appendDir := func(dir string) {
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+
+	if profileDir != "" {
+		appendDir(profileDir)
+	}
+	if inheritedTerminfo != "" {
+		appendDir(inheritedTerminfo)
+	}
+	if inheritedTerminfoDirs != "" {
+		for _, dir := range strings.Split(inheritedTerminfoDirs, string(os.PathListSeparator)) {
+			appendDir(dir)
+		}
+	}
+	if profileDir != "" {
+		appendDir("")
+	}
+
+	return strings.Join(dirs, string(os.PathListSeparator))
 }
 
 func shouldDropTerminalEnv(key string) bool {

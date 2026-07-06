@@ -104,8 +104,14 @@ func TestTerminalEnvUsesStableCometProfile(t *testing.T) {
 	if env["TERMINFO"] != "" {
 		t.Fatalf("TERMINFO = %q, want scrubbed", env["TERMINFO"])
 	}
-	if env["TERMINFO_DIRS"] != filepath.Join("tmp", "terminfo")+string(os.PathListSeparator) {
-		t.Fatalf("TERMINFO_DIRS = %q, want Comet terminfo dir with system fallback", env["TERMINFO_DIRS"])
+	wantTerminfoDirs := strings.Join([]string{
+		filepath.Join("tmp", "terminfo"),
+		"/launcher/terminfo",
+		"/launcher/terminfo-dirs",
+		"",
+	}, string(os.PathListSeparator))
+	if env["TERMINFO_DIRS"] != wantTerminfoDirs {
+		t.Fatalf("TERMINFO_DIRS = %q, want %q", env["TERMINFO_DIRS"], wantTerminfoDirs)
 	}
 	if env["TERM_PROGRAM"] != terminalProgram {
 		t.Fatalf("TERM_PROGRAM = %q, want %q", env["TERM_PROGRAM"], terminalProgram)
@@ -124,6 +130,28 @@ func TestTerminalEnvUsesStableCometProfile(t *testing.T) {
 	}
 	if env["COMET_TEST_KEEP"] != "yes" {
 		t.Fatalf("COMET_TEST_KEEP = %q, want preserved", env["COMET_TEST_KEEP"])
+	}
+}
+
+func TestTerminalEnvPreservesInheritedTerminfoWithoutCometProfile(t *testing.T) {
+	oldTerminalProfile := terminalProfile
+	terminalProfile = func() terminalProfileConfig {
+		return terminalProfileConfig{term: fallbackTerminalTerm}
+	}
+	t.Cleanup(func() { terminalProfile = oldTerminalProfile })
+
+	separator := string(os.PathListSeparator)
+	t.Setenv("TERMINFO", "/launcher/terminfo")
+	t.Setenv("TERMINFO_DIRS", "/launcher/terminfo-dirs"+separator)
+
+	env := envMap(terminalEnv("/bin/bash"))
+	wantTerminfoDirs := strings.Join([]string{
+		"/launcher/terminfo",
+		"/launcher/terminfo-dirs",
+		"",
+	}, separator)
+	if env["TERMINFO_DIRS"] != wantTerminfoDirs {
+		t.Fatalf("TERMINFO_DIRS = %q, want %q", env["TERMINFO_DIRS"], wantTerminfoDirs)
 	}
 }
 
