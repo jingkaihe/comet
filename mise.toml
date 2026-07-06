@@ -36,6 +36,16 @@ VERSION_PKG = "github.com/jingkaihe/comet/internal/version"
 description = "Generate embedded frontend assets"
 run = ["go generate ./internal/web"]
 
+[tasks.vendor-terminfo]
+description = "Refresh vendored xterm-ghostty terminfo source"
+run = [
+  "command -v infocmp >/dev/null || { echo 'infocmp is required to vendor xterm-ghostty terminfo' >&2; exit 1; }",
+  "command -v tic >/dev/null || { echo 'tic is required to validate xterm-ghostty terminfo' >&2; exit 1; }",
+  "infocmp -x xterm-ghostty >/dev/null || { echo 'xterm-ghostty terminfo is not installed; install Ghostty or its terminfo before running this task' >&2; exit 1; }",
+  "mkdir -p internal/server/terminfo",
+  "tmp=$(mktemp -d); trap 'rm -rf \"$tmp\"' EXIT; { echo '# xterm-ghostty terminfo source for Comet PTY sessions.'; echo '# Generated from Ghostty terminfo; see https://github.com/ghostty-org/ghostty/src/terminfo/ghostty.zig'; echo '# Ghostty is MIT licensed: Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.'; infocmp -x xterm-ghostty | sed '/^#/d'; } > \"$tmp/xterm-ghostty.terminfo\"; tic -x -o \"$tmp/compiled\" \"$tmp/xterm-ghostty.terminfo\"; TERMINFO_DIRS=\"$tmp/compiled:\" infocmp -x xterm-ghostty >/dev/null; mv \"$tmp/xterm-ghostty.terminfo\" internal/server/terminfo/xterm-ghostty.terminfo",
+]
+
 [tasks.build]
 description = "Build the application with embedded web UI"
 depends = ["code-generation"]
