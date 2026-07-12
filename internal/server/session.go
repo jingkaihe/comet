@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -20,6 +23,11 @@ import (
 const (
 	terminalReplayBufferLimit      = 1024 * 1024
 	terminalAttachmentBufferLength = 128
+	terminalTerm                   = "xterm-ghostty"
+	fallbackTerminalTerm           = "xterm-256color"
+	terminalProgram                = "comet"
+	terminalTerminfoCacheVersion   = "xterm-ghostty-v1"
+	terminalTerminfoInstallTimeout = 3 * time.Second
 	defaultTerminalRows            = 28
 	defaultTerminalCols            = 100
 	maxTerminalRows                = 400
@@ -37,6 +45,24 @@ var (
 var processHasDescendant = defaultProcessHasDescendant
 
 var processSnapshot = defaultProcessSnapshot
+
+var terminalCacheDir = os.UserCacheDir
+
+//go:embed terminfo/xterm-ghostty.terminfo
+var xtermGhosttyTerminfo string
+
+var terminalProfile = defaultTerminalProfile
+
+var terminfoInstall struct {
+	once sync.Once
+	dir  string
+	err  error
+}
+
+type terminalProfileConfig struct {
+	term        string
+	terminfoDir string
+}
 
 type processStatus struct {
 	CWD               string
@@ -758,26 +784,148 @@ func username() string {
 }
 
 func terminalEnv(shell string) []string {
-	env := os.Environ()
-	hasTerm := false
-	hasShell := false
-	for _, entry := range env {
-		if strings.HasPrefix(entry, "TERM=") {
-			hasTerm = true
+	profile := terminalProfile()
+	baseEnv := os.Environ()
+	env := make([]string, 0, len(baseEnv)+5)
+	var inheritedTerminfo string
+	var inheritedTerminfoDirs string
+	for _, entry := range baseEnv {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			switch key {
+			case "TERMINFO":
+				inheritedTerminfo = value
+			case "TERMINFO_DIRS":
+				inheritedTerminfoDirs = value
+			}
+			if shouldDropTerminalEnv(key) {
+				continue
+			}
 		}
-		if strings.HasPrefix(entry, "SHELL=") {
-			hasShell = true
-		}
+		env = append(env, entry)
 	}
 
-	if !hasTerm {
-		env = append(env, "TERM=xterm-256color")
-	}
-	if !hasShell {
-		env = append(env, "SHELL="+shell)
+	env = append(env,
+		"TERM="+profile.term,
+		"TERM_PROGRAM="+terminalProgram,
+		"COLORTERM=truecolor",
+		"SHELL="+shell,
+	)
+	if terminfoDirs := terminalTerminfoDirs(profile.terminfoDir, inheritedTerminfo, inheritedTerminfoDirs); terminfoDirs != "" {
+		env = append(env, "TERMINFO_DIRS="+terminfoDirs)
 	}
 
 	return env
+}
+
+func terminalTerminfoDirs(profileDir string, inheritedTerminfo string, inheritedTerminfoDirs string) string {
+	dirs := make([]string, 0, 4)
+	seen := make(map[string]struct{}, 4)
+	appendDir := func(dir string) {
+		if _, ok := seen[dir]; ok {
+			return
+		}
+		seen[dir] = struct{}{}
+		dirs = append(dirs, dir)
+	}
+
+	if profileDir != "" {
+		appendDir(profileDir)
+	}
+	if inheritedTerminfo != "" {
+		appendDir(inheritedTerminfo)
+	}
+	if inheritedTerminfoDirs != "" {
+		for _, dir := range strings.Split(inheritedTerminfoDirs, string(os.PathListSeparator)) {
+			appendDir(dir)
+		}
+	}
+	if profileDir != "" {
+		appendDir("")
+	}
+
+	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+func shouldDropTerminalEnv(key string) bool {
+	switch key {
+	case "TERM", "TERMINFO", "TERMINFO_DIRS", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+		"COLORTERM", "LC_TERMINAL", "LC_TERMINAL_VERSION", "TERM_SESSION_ID",
+		"ITERM_SESSION_ID", "SHELL":
+		return true
+	}
+
+	return strings.HasPrefix(key, "GHOSTTY_") || strings.HasPrefix(key, "KITTY_") || strings.HasPrefix(key, "WEZTERM_")
+}
+
+func defaultTerminalProfile() terminalProfileConfig {
+	dir, err := ensureXtermGhosttyTerminfo()
+	if err != nil {
+		return terminalProfileConfig{term: fallbackTerminalTerm}
+	}
+
+	return terminalProfileConfig{term: terminalTerm, terminfoDir: dir}
+}
+
+func ensureXtermGhosttyTerminfo() (string, error) {
+	terminfoInstall.once.Do(func() {
+		terminfoInstall.dir, terminfoInstall.err = installXtermGhosttyTerminfo()
+	})
+	return terminfoInstall.dir, terminfoInstall.err
+}
+
+func installXtermGhosttyTerminfo() (string, error) {
+	cacheDir, err := terminalCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("find user cache directory: %w", err)
+	}
+
+	terminfoDir := filepath.Join(cacheDir, "comet", "terminfo", terminalTerminfoCacheVersion)
+	if xtermGhosttyTerminfoInstalled(terminfoDir) {
+		return terminfoDir, nil
+	}
+
+	if err := os.MkdirAll(terminfoDir, 0o700); err != nil {
+		return "", fmt.Errorf("create terminfo cache: %w", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), terminalTerminfoInstallTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "tic", "-x", "-o", terminfoDir, "-")
+	cmd.Stdin = strings.NewReader(xtermGhosttyTerminfo)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return "", fmt.Errorf("install xterm-ghostty terminfo: %w: %s", err, message)
+		}
+		return "", fmt.Errorf("install xterm-ghostty terminfo: %w", err)
+	}
+
+	if !xtermGhosttyTerminfoInstalled(terminfoDir) {
+		return "", errors.New("install xterm-ghostty terminfo: compiled entry was not created")
+	}
+
+	return terminfoDir, nil
+}
+
+func xtermGhosttyTerminfoInstalled(dir string) bool {
+	if dir == "" {
+		return false
+	}
+
+	paths := []string{
+		filepath.Join(dir, "x", terminalTerm),
+		filepath.Join(dir, fmt.Sprintf("%02x", terminalTerm[0]), terminalTerm),
+	}
+	for _, path := range paths {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func boundedRows(value int) int {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSGRWheelSequence, getWheelRepeatCount, TerminalPane } from './terminal-pane';
+import { buildSGRWheelSequence, getWheelRepeatCount, shellAltArrowSequence, TerminalPane } from './terminal-pane';
 
 const DOM_DELTA_PAGE = 2;
 
@@ -54,6 +54,34 @@ describe('terminal wheel mouse reporting', () => {
       cols: 80,
       rows: 24,
     })).toBe('');
+  });
+});
+
+describe('terminal shell key compatibility', () => {
+  const key = (init: Partial<KeyboardEvent>) => ({
+    altKey: false,
+    ctrlKey: false,
+    key: '',
+    metaKey: false,
+    shiftKey: false,
+    ...init,
+  }) as KeyboardEvent;
+
+  it('maps prompt alt-left and alt-right to shell word movement', () => {
+    expect(shellAltArrowSequence(key({ key: 'ArrowLeft', altKey: true }), false)).toBe('\x1bb');
+    expect(shellAltArrowSequence(key({ key: 'ArrowRight', altKey: true }), false)).toBe('\x1bf');
+  });
+
+  it('does not rewrite alt-left or alt-right in alternate screen programs', () => {
+    expect(shellAltArrowSequence(key({ key: 'ArrowLeft', altKey: true }), true)).toBeNull();
+    expect(shellAltArrowSequence(key({ key: 'ArrowRight', altKey: true }), true)).toBeNull();
+  });
+
+  it('ignores other modified arrow combinations', () => {
+    expect(shellAltArrowSequence(key({ key: 'ArrowLeft', ctrlKey: true }), false)).toBeNull();
+    expect(shellAltArrowSequence(key({ key: 'ArrowLeft', altKey: true, shiftKey: true }), false)).toBeNull();
+    expect(shellAltArrowSequence(key({ key: 'ArrowRight', ctrlKey: true, altKey: true }), false)).toBeNull();
+    expect(shellAltArrowSequence(key({ key: 'ArrowUp', altKey: true }), false)).toBeNull();
   });
 });
 

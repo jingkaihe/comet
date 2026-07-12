@@ -3,12 +3,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -69,6 +71,137 @@ func TestParseTerminalSignal(t *testing.T) {
 	if _, ok := parseTerminalSignal("wat"); ok {
 		t.Fatal("unknown signal should not parse")
 	}
+}
+
+func TestTerminalEnvUsesStableCometProfile(t *testing.T) {
+	oldTerminalProfile := terminalProfile
+	terminalProfile = func() terminalProfileConfig {
+		return terminalProfileConfig{term: terminalTerm, terminfoDir: filepath.Join("tmp", "terminfo")}
+	}
+	t.Cleanup(func() { terminalProfile = oldTerminalProfile })
+
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("TERMINFO", "/launcher/terminfo")
+	t.Setenv("TERMINFO_DIRS", "/launcher/terminfo-dirs")
+	t.Setenv("TERM_PROGRAM", "iTerm.app")
+	t.Setenv("TERM_PROGRAM_VERSION", "3.5")
+	t.Setenv("COLORTERM", "launcher-color")
+	t.Setenv("LC_TERMINAL", "iTerm2")
+	t.Setenv("LC_TERMINAL_VERSION", "3.5")
+	t.Setenv("TERM_SESSION_ID", "terminal-session")
+	t.Setenv("ITERM_SESSION_ID", "iterm-session")
+	t.Setenv("GHOSTTY_RESOURCES_DIR", "/ghostty")
+	t.Setenv("KITTY_WINDOW_ID", "kitty")
+	t.Setenv("WEZTERM_PANE", "wezterm")
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("COMET_TEST_KEEP", "yes")
+
+	env := envMap(terminalEnv("/bin/bash"))
+
+	if env["TERM"] != terminalTerm {
+		t.Fatalf("TERM = %q, want %q", env["TERM"], terminalTerm)
+	}
+	if env["TERMINFO"] != "" {
+		t.Fatalf("TERMINFO = %q, want scrubbed", env["TERMINFO"])
+	}
+	wantTerminfoDirs := strings.Join([]string{
+		filepath.Join("tmp", "terminfo"),
+		"/launcher/terminfo",
+		"/launcher/terminfo-dirs",
+		"",
+	}, string(os.PathListSeparator))
+	if env["TERMINFO_DIRS"] != wantTerminfoDirs {
+		t.Fatalf("TERMINFO_DIRS = %q, want %q", env["TERMINFO_DIRS"], wantTerminfoDirs)
+	}
+	if env["TERM_PROGRAM"] != terminalProgram {
+		t.Fatalf("TERM_PROGRAM = %q, want %q", env["TERM_PROGRAM"], terminalProgram)
+	}
+	if env["TERM_PROGRAM_VERSION"] != "" || env["LC_TERMINAL"] != "" || env["TERM_SESSION_ID"] != "" || env["ITERM_SESSION_ID"] != "" {
+		t.Fatalf("launcher terminal variables leaked into env: %#v", env)
+	}
+	if env["GHOSTTY_RESOURCES_DIR"] != "" || env["KITTY_WINDOW_ID"] != "" || env["WEZTERM_PANE"] != "" {
+		t.Fatalf("emulator-specific variables leaked into env: %#v", env)
+	}
+	if env["COLORTERM"] != "truecolor" {
+		t.Fatalf("COLORTERM = %q, want truecolor", env["COLORTERM"])
+	}
+	if env["SHELL"] != "/bin/bash" {
+		t.Fatalf("SHELL = %q, want resolved shell", env["SHELL"])
+	}
+	if env["COMET_TEST_KEEP"] != "yes" {
+		t.Fatalf("COMET_TEST_KEEP = %q, want preserved", env["COMET_TEST_KEEP"])
+	}
+}
+
+func TestTerminalEnvPreservesInheritedTerminfoWithoutCometProfile(t *testing.T) {
+	oldTerminalProfile := terminalProfile
+	terminalProfile = func() terminalProfileConfig {
+		return terminalProfileConfig{term: fallbackTerminalTerm}
+	}
+	t.Cleanup(func() { terminalProfile = oldTerminalProfile })
+
+	separator := string(os.PathListSeparator)
+	t.Setenv("TERMINFO", "/launcher/terminfo")
+	t.Setenv("TERMINFO_DIRS", "/launcher/terminfo-dirs"+separator)
+
+	env := envMap(terminalEnv("/bin/bash"))
+	wantTerminfoDirs := strings.Join([]string{
+		"/launcher/terminfo",
+		"/launcher/terminfo-dirs",
+		"",
+	}, separator)
+	if env["TERMINFO_DIRS"] != wantTerminfoDirs {
+		t.Fatalf("TERMINFO_DIRS = %q, want %q", env["TERMINFO_DIRS"], wantTerminfoDirs)
+	}
+}
+
+func TestDefaultTerminalProfileFallsBackWhenTerminfoInstallFails(t *testing.T) {
+	oldTerminalCacheDir := terminalCacheDir
+	terminalCacheDir = func() (string, error) { return "", errors.New("no cache") }
+	t.Cleanup(func() { terminalCacheDir = oldTerminalCacheDir })
+	resetTerminfoInstallForTest(t)
+
+	profile := defaultTerminalProfile()
+	if profile.term != fallbackTerminalTerm || profile.terminfoDir != "" {
+		t.Fatalf("profile = %#v, want fallback term without terminfo dir", profile)
+	}
+}
+
+func TestEnsureXtermGhosttyTerminfoInstallsIntoCache(t *testing.T) {
+	if _, err := exec.LookPath("tic"); err != nil {
+		t.Skip("tic is not installed")
+	}
+
+	oldTerminalCacheDir := terminalCacheDir
+	terminalCacheDir = func() (string, error) { return t.TempDir(), nil }
+	t.Cleanup(func() { terminalCacheDir = oldTerminalCacheDir })
+	resetTerminfoInstallForTest(t)
+
+	dir, err := ensureXtermGhosttyTerminfo()
+	if err != nil {
+		t.Fatalf("ensureXtermGhosttyTerminfo() error = %v", err)
+	}
+	if !xtermGhosttyTerminfoInstalled(dir) {
+		t.Fatalf("xterm-ghostty terminfo was not installed in %s", dir)
+	}
+}
+
+func resetTerminfoInstallForTest(t *testing.T) {
+	t.Helper()
+	terminfoInstall.once = sync.Once{}
+	terminfoInstall.dir = ""
+	terminfoInstall.err = nil
+}
+
+func envMap(env []string) map[string]string {
+	result := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func TestTerminalOriginAllowed(t *testing.T) {

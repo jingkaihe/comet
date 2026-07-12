@@ -12,6 +12,8 @@ const WHEEL_BUTTON_RIGHT = 67;
 const WHEEL_PIXEL_FALLBACK = 33;
 const DOM_DELTA_LINE = 1;
 const DOM_DELTA_PAGE = 2;
+const SHELL_WORD_LEFT_SEQUENCE = '\x1bb';
+const SHELL_WORD_RIGHT_SEQUENCE = '\x1bf';
 
 export const defaultTerminalTheme: TerminalThemeColors = {
   background: '#18140f',
@@ -111,6 +113,21 @@ export const buildSGRWheelSequence = (event: WheelEvent, options: {
   const row = clamp(Math.floor((event.clientY - options.canvasRect.top) / options.cellHeight) + 1, 1, options.rows);
   const button = getSGRWheelButton(event) + getSGRMouseModifiers(event);
   return `\x1b[<${button};${col};${row}M`.repeat(repeatCount);
+};
+
+export const shellAltArrowSequence = (event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>, isAlternateScreen: boolean) => {
+  if (isAlternateScreen || event.ctrlKey || !event.altKey || event.metaKey || event.shiftKey) {
+    return null;
+  }
+
+  switch (event.key) {
+    case 'ArrowLeft':
+      return SHELL_WORD_LEFT_SEQUENCE;
+    case 'ArrowRight':
+      return SHELL_WORD_RIGHT_SEQUENCE;
+    default:
+      return null;
+  }
 };
 
 const isTerminalServerEvent = (value: unknown): value is TerminalServerEvent => {
@@ -243,6 +260,11 @@ export class TerminalPane {
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') {
         return false;
+      }
+      const shellSequence = shellAltArrowSequence(event, terminal.wasmTerm?.isAlternateScreen() ?? false);
+      if (shellSequence !== null) {
+        this.sendTerminalInput(shellSequence);
+        return true;
       }
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === 'c' && terminal.hasSelection()) {
